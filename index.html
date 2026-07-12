@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>عتق اونلاين - العروض والطلبات السريعة</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#b7336a" />
+    <link rel="apple-touch-icon" href="/icon.jpg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // Intercept and mock Vite HMR WebSocket connection to prevent periodic reload loops in proxy/cloud environments
+      (function() {
+        const OriginalWebSocket = window.WebSocket;
+        if (OriginalWebSocket) {
+          window.WebSocket = function(url, protocols) {
+            const isViteHmr = typeof url === 'string' && (
+              url.includes('vite') || 
+              url.includes('hmr') || 
+              url.includes('3000') ||
+              url.includes(window.location.hostname)
+            ) && !url.includes('firebase');
+
+            if (isViteHmr) {
+              console.log('🛡️ Intercepted and mocked Vite HMR WebSocket as ALWAYS OPEN to prevent reload loop:', url);
+              
+              const mockWS = {
+                url: url,
+                readyState: 1, // OPEN
+                bufferedAmount: 0,
+                extensions: '',
+                protocol: '',
+                binaryType: 'blob',
+                
+                send: function(data) {
+                  // No-op
+                },
+                close: function() {
+                  // No-op
+                },
+                
+                onopen: null,
+                onerror: null,
+                onclose: null,
+                onmessage: null,
+                
+                addEventListener: function(type, listener) {
+                  if (!this._listeners) this._listeners = {};
+                  if (!this._listeners[type]) this._listeners[type] = [];
+                  this._listeners[type].push(listener);
+                  
+                  // Trigger open event to make Vite believe connection succeeded
+                  if (type === 'open') {
+                    setTimeout(() => {
+                      if (typeof this.onopen === 'function') this.onopen();
+                      try {
+                        listener({ type: 'open' });
+                      } catch (e) {}
+                    }, 50);
+                  }
+                },
+                removeEventListener: function(type, listener) {
+                  if (this._listeners && this._listeners[type]) {
+                    this._listeners[type] = this._listeners[type].filter(l => l !== listener);
+                  }
+                },
+                dispatchEvent: function(event) {
+                  return true;
+                }
+              };
+              
+              setTimeout(() => {
+                if (typeof mockWS.onopen === 'function') mockWS.onopen();
+              }, 50);
+
+              return mockWS;
+            }
+            return new OriginalWebSocket(url, protocols);
+          };
+          Object.setPrototypeOf(window.WebSocket, OriginalWebSocket);
+          window.WebSocket.prototype = OriginalWebSocket.prototype;
+        }
+      })();
+    </script>
+    <script>
+      // Register Service Worker for PWA / Google Play readiness
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('🚀 Service Worker registered successfully:', reg.scope))
+            .catch(err => console.error('❌ Service Worker registration failed:', err));
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,6 @@
+{
+  "name": "عتق اونلاين",
+  "description": "Arabic Merchant Dashboard and Customer Store for Matjrati Online. Allows merchants to manage product offers, upload compressed images, calculate profit margins dynamically, and monitor active and expired listings in real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
