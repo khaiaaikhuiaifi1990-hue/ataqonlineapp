@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ataq-online-v1';
+const CACHE_NAME = 'ataq-online-v7';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -30,19 +30,21 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event (Offline Fallback / Cache-First)
+// Fetch Event (Network-First with Cache Fallback for dynamic updates)
 self.addEventListener('fetch', (event) => {
   // Only handle standard http/https GET requests
   if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) {
     return;
   }
 
+  // Skip intercepting version.json to allow live server checks
+  if (event.request.url.includes('version.json')) {
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         // Cache new successful local requests dynamically
         if (response && response.status === 200 && response.type === 'basic') {
           const responseToCache = response.clone();
@@ -51,10 +53,15 @@ self.addEventListener('fetch', (event) => {
           });
         }
         return response;
-      }).catch(() => {
-        // Return cached index.html as fallback for SPA routing
-        return caches.match('/index.html');
-      });
-    })
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          // Return cached index.html as fallback for SPA routing
+          return caches.match('/index.html');
+        });
+      })
   );
 });

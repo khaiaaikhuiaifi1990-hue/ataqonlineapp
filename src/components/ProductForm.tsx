@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Camera, RefreshCw, X, Tag, Calendar, DollarSign, Type, FileText, Palette, Trash2 } from 'lucide-react';
-import { Product, Category } from '../types';
+import { Product, Category, Agent } from '../types';
 
 interface ProductFormProps {
   onPublish: (data: Omit<Product, 'id' | 'status'>) => Promise<void>;
@@ -10,6 +10,7 @@ interface ProductFormProps {
   margin: number;       // e.g. 1.50
   marginRaw: number;    // e.g. 50%
   categories: Category[];
+  currentMerchant?: Agent | null;
 }
 
 const DURATIONS = [
@@ -23,7 +24,7 @@ const DURATIONS = [
   { value: '999', label: '♾️ عرض مستمر' },
 ];
 
-export default function ProductForm({ onPublish, editingProduct, onCancelEdit, margin, marginRaw, categories }: ProductFormProps) {
+export default function ProductForm({ onPublish, editingProduct, onCancelEdit, margin, marginRaw, categories, currentMerchant }: ProductFormProps) {
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
   const [duration, setDuration] = useState('1');
@@ -36,6 +37,13 @@ export default function ProductForm({ onPublish, editingProduct, onCancelEdit, m
   const [errorText, setErrorText] = useState('');
   const [statusText, setStatusText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Auto set mCode when currentMerchant changes
+  useEffect(() => {
+    if (currentMerchant) {
+      setMCode(currentMerchant.mCode);
+    }
+  }, [currentMerchant]);
 
   // File input refs
   const fileRefs = [
@@ -91,7 +99,7 @@ export default function ProductForm({ onPublish, editingProduct, onCancelEdit, m
     setCategory('ملابس نسائية');
     setDuration('1');
     setCostPrice('');
-    setMCode('');
+    setMCode(currentMerchant ? currentMerchant.mCode : '');
     setDesc('');
     setSizes('');
     setImgs([null, null, null, null]);
@@ -399,8 +407,19 @@ export default function ProductForm({ onPublish, editingProduct, onCancelEdit, m
               value={mCode}
               onChange={(e) => setMCode(e.target.value)}
               placeholder="مثلا: AT-490"
-              className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
+              disabled={!!currentMerchant}
+              readOnly={!!currentMerchant}
+              className={`w-full px-4 py-3 border rounded-xl focus:outline-none transition-all font-semibold ${
+                currentMerchant
+                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed font-mono'
+                  : 'bg-gray-50/50 border-gray-200 focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a]'
+              }`}
             />
+            {currentMerchant && (
+              <span className="text-[10px] text-emerald-600 block font-black mt-1">
+                ✔ تم تحديد الرمز تلقائياً لحسابك النشط ({currentMerchant.name})
+              </span>
+            )}
           </div>
 
           <div>

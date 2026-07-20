@@ -25,6 +25,7 @@ export interface Agent {
   name: string;
   phone: string;
   mCode: string;
+  password?: string;
   status: 'active' | 'suspended';
   createdAt?: any;
 }

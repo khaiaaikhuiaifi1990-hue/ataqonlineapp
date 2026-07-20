@@ -9,7 +9,7 @@ interface OwnerDashboardProps {
   rawMargin: number;
   onUpdateConfig: (newMargin: number, newMerchantCode: string, newOwnerCode: string) => Promise<void>;
   agents: Agent[];
-  onAddAgent: (name: string, phone: string, mCode: string) => Promise<void>;
+  onAddAgent: (name: string, phone: string, mCode: string, password?: string) => Promise<void>;
   onToggleAgentStatus: (id: string, currentStatus: 'active' | 'suspended') => Promise<void>;
   onDeleteAgent: (id: string) => Promise<void>;
   customerServicePhones?: string[];
@@ -55,6 +55,7 @@ export default function OwnerDashboard({
   const [agentName, setAgentName] = useState('');
   const [agentPhone, setAgentPhone] = useState('');
   const [agentMCode, setAgentMCode] = useState('');
+  const [agentPassword, setAgentPassword] = useState('');
   const [isAddingAgent, setIsAddingAgent] = useState(false);
 
   // Category state
@@ -192,11 +193,17 @@ export default function OwnerDashboard({
 
     try {
       setIsAddingAgent(true);
-      await onAddAgent(agentName.trim(), agentPhone.trim(), agentMCode.trim().toUpperCase());
+      await onAddAgent(
+        agentName.trim(),
+        agentPhone.trim(),
+        agentMCode.trim().toUpperCase(),
+        agentPassword.trim()
+      );
       // Reset inputs
       setAgentName('');
       setAgentPhone('');
       setAgentMCode('');
+      setAgentPassword('');
     } catch (err) {
       console.error(err);
       alert('حدث خطأ أثناء تسجيل المندوب بالسيرفر ❌');
@@ -573,7 +580,7 @@ export default function OwnerDashboard({
               </h4>
 
               <form onSubmit={handleCreateAgent} action="javascript:void(0);" className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs font-bold text-gray-700">
-                <div className="sm:col-span-4 space-y-1">
+                <div className="sm:col-span-3 space-y-1">
                   <span>اسم المندوب:</span>
                   <input
                     type="text"
@@ -583,7 +590,7 @@ export default function OwnerDashboard({
                     className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#b7336a]"
                   />
                 </div>
-                <div className="sm:col-span-4 space-y-1">
+                <div className="sm:col-span-3 space-y-1">
                   <span>رقم الهاتف/الواتساب:</span>
                   <input
                     type="text"
@@ -593,7 +600,7 @@ export default function OwnerDashboard({
                     className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-[#b7336a]"
                   />
                 </div>
-                <div className="sm:col-span-4 space-y-1">
+                <div className="sm:col-span-3 space-y-1">
                   <span>رمز تعريفي (mCode):</span>
                   <input
                     type="text"
@@ -601,6 +608,16 @@ export default function OwnerDashboard({
                     onChange={(e) => setAgentMCode(e.target.value)}
                     placeholder="مثال: S1"
                     className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl font-mono text-center focus:outline-none focus:ring-1 focus:ring-[#b7336a]"
+                  />
+                </div>
+                <div className="sm:col-span-3 space-y-1">
+                  <span className="text-[#b7336a]">الرمز السري (الـ PIN):</span>
+                  <input
+                    type="text"
+                    value={agentPassword}
+                    onChange={(e) => setAgentPassword(e.target.value)}
+                    placeholder="مثلاً: 1234"
+                    className="w-full px-3 py-2.5 bg-white border border-[#b7336a]/30 rounded-xl font-mono text-center focus:outline-none focus:ring-1 focus:ring-[#b7336a]"
                   />
                 </div>
                 <div className="sm:col-span-12 pt-1">
@@ -631,7 +648,7 @@ export default function OwnerDashboard({
                   {agents.map((agent) => (
                     <div
                       key={agent.id}
-                      className={`g-white border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
+                      className={`bg-white border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
                         agent.status === 'suspended'
                           ? 'bg-red-50/20 border-red-100 text-red-950'
                           : 'bg-white border-gray-150 text-gray-900 hover:border-gray-200 shadow-sm'
@@ -658,9 +675,13 @@ export default function OwnerDashboard({
                             </span>
                           </div>
                           
-                          <div className="flex items-center gap-2 mt-1.5 text-xs text-gray-400 font-bold">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-xs text-gray-400 font-bold">
                             <Phone className="w-3 h-3 text-gray-400" />
                             <span>{agent.phone}</span>
+                            <span>•</span>
+                            <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md font-mono text-[10px]">
+                              الرمز السري (PIN): {agent.password || 'غير محدد'}
+                            </span>
                             <span>•</span>
                             <a
                               href={`https://wa.me/${agent.phone.replace(/[^0-9]/g, '')}`}

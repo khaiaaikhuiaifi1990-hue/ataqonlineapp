@@ -43,6 +43,50 @@ export default function App() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [autoDeleteExpired, setAutoDeleteExpired] = useState(true);
+  const [currentMerchant, setCurrentMerchant] = useState<Agent | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+
+  // Check for Service Worker Updates
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.ready.then((reg) => {
+        if (reg.waiting) {
+          setUpdateAvailable(true);
+        }
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          if (installingWorker) {
+            installingWorker.onstatechange = () => {
+              if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                setUpdateAvailable(true);
+              }
+            };
+          }
+        };
+      }).catch(err => console.warn('SW ready check failed:', err));
+    }
+  }, []);
+
+  const handleForceUpdate = async () => {
+    try {
+      showToast('جاري تنظيف الذاكرة وتنزيل التحديث الجديد... ⏳', 'success');
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.update();
+        }
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        for (const key of keys) {
+          await caches.delete(key);
+        }
+      }
+      window.location.reload();
+    } catch (e) {
+      window.location.reload();
+    }
+  };
 
   // Custom confirmation dialog state
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -111,15 +155,52 @@ export default function App() {
             setAdminPin(cached);
             setUserRole('owner');
             setIsAuthenticated(true);
-          } else if (cachedRole === 'merchant' && cached === code) {
-            setAdminPin(cached);
-            setUserRole('merchant');
-            setIsAuthenticated(true);
+          } else if (cachedRole === 'merchant') {
+            const cachedAgentStr = localStorage.getItem('merchantAgent');
+            let isValid = false;
+            let matchedAgent: Agent | null = null;
+            
+            if (cachedAgentStr) {
+              try {
+                const parsed = JSON.parse(cachedAgentStr);
+                const dbAgent = loadedAgents.find(a => a.id === parsed.id);
+                if (dbAgent && dbAgent.status !== 'suspended') {
+                  const expectedPassword = dbAgent.password || code;
+                  if (cached === expectedPassword) {
+                    isValid = true;
+                    matchedAgent = dbAgent;
+                  }
+                }
+              } catch (e) {
+                console.error("Error parsing cached merchant agent:", e);
+              }
+            } else {
+              if (cached === code) {
+                isValid = true;
+              }
+            }
+
+            if (isValid) {
+              setAdminPin(cached);
+              setUserRole('merchant');
+              setCurrentMerchant(matchedAgent);
+              setIsAuthenticated(true);
+            } else {
+              localStorage.removeItem('adminPin');
+              localStorage.removeItem('adminRole');
+              localStorage.removeItem('merchantAgent');
+              setAdminPin('');
+              setUserRole(null);
+              setCurrentMerchant(null);
+              setIsAuthenticated(false);
+            }
           } else {
             localStorage.removeItem('adminPin');
             localStorage.removeItem('adminRole');
+            localStorage.removeItem('merchantAgent');
             setAdminPin('');
             setUserRole(null);
+            setCurrentMerchant(null);
             setIsAuthenticated(false);
           }
         }
@@ -184,18 +265,27 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleLoginSuccess = (pin: string, role: 'merchant' | 'owner') => {
+  const handleLoginSuccess = (pin: string, role: 'merchant' | 'owner', selectedAgent?: Agent | null) => {
     setAdminPin(pin);
     setUserRole(role);
+    if (role === 'merchant' && selectedAgent) {
+      setCurrentMerchant(selectedAgent);
+      localStorage.setItem('merchantAgent', JSON.stringify(selectedAgent));
+    } else {
+      setCurrentMerchant(null);
+      localStorage.removeItem('merchantAgent');
+    }
     setIsAuthenticated(true);
-    showToast(role === 'owner' ? 'مرحباً بالمدير العام! تم تفويض كامل الصلاحيات 👑' : 'تم التحقق والدخول بنجاح لطور الإدارة والتسويق 🔐');
+    showToast(role === 'owner' ? 'مرحباً بالمدير العام! تم تفويض كامل الصلاحيات 👑' : `مرحباً بك يا ${selectedAgent?.name || 'التاجر المعتمد'} 👋`);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('adminPin');
     localStorage.removeItem('adminRole');
+    localStorage.removeItem('merchantAgent');
     setAdminPin('');
     setUserRole(null);
+    setCurrentMerchant(null);
     setIsAuthenticated(false);
     showToast('تم تسجيل الخروج بأمان 🚪');
   };
@@ -252,19 +342,21 @@ export default function App() {
     }
   };
 
-  const handleCreateAgent = async (name: string, phone: string, mCode: string) => {
+  const handleCreateAgent = async (name: string, phone: string, mCode: string, password?: string) => {
     try {
       const configDocRef = doc(fs, 'system_config', 'إعدادات المتجر');
+      const finalPassword = password && password.trim() ? password.trim() : Math.floor(1000 + Math.random() * 9000).toString();
       const newAgent: Agent = {
         id: Math.random().toString(36).substring(2, 9),
         name,
         phone,
         mCode,
+        password: finalPassword,
         status: 'active'
       };
       const updatedAgents = [...agents, newAgent];
       await setDoc(configDocRef, { agents: updatedAgents }, { merge: true });
-      showToast(`تم إقرار وترخيص المندوب: ${name} ✅`, 'success');
+      showToast(`تم إقرار وترخيص المندوب: ${name} (PIN: ${finalPassword}) ✅`, 'success');
     } catch (err) {
       console.error("Firestore agent write error:", err);
       showToast('فشل قيد المندوب بالسيرفر ❌', 'error');
@@ -434,12 +526,17 @@ export default function App() {
     }
   }, [products, autoDeleteExpired]);
 
+  // Filter products for logged-in merchant if applicable
+  const merchantProducts = currentMerchant
+    ? products.filter(p => p.mCode?.trim().toUpperCase() === currentMerchant.mCode?.trim().toUpperCase())
+    : products;
+
   // Calculate high level stats
-  const totalOffers = products.length;
-  const activeOffers = products.filter(
+  const totalOffers = (userRole === 'merchant' && currentMerchant) ? merchantProducts.length : products.length;
+  const activeOffers = ((userRole === 'merchant' && currentMerchant) ? merchantProducts : products).filter(
     (p) => p.status === 'active' && (!p.expiry || p.expiry > 9000000000000 || Date.now() < p.expiry)
   ).length;
-  const expiredOffers = products.filter(
+  const expiredOffers = ((userRole === 'merchant' && currentMerchant) ? merchantProducts : products).filter(
     (p) => p.expiry && p.expiry < 9000000000000 && Date.now() >= p.expiry
   ).length;
 
@@ -463,6 +560,31 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Dynamic Update Alert Banner */}
+      <AnimatePresence>
+        {updateAvailable && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-gradient-to-r from-[#b7336a] via-rose-600 to-[#b7336a] text-white border-b border-rose-500 shadow-md text-right overflow-hidden relative z-50"
+          >
+            <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs sm:text-sm font-bold">
+              <div className="flex items-center gap-2">
+                <span className="text-base sm:text-lg animate-bounce">✨</span>
+                <span>يتوفر تحديث جديد وميزات محسنة لعتق أونلاين!</span>
+              </div>
+              <button
+                onClick={handleForceUpdate}
+                className="bg-white text-[#b7336a] hover:bg-rose-50 px-4 py-2 rounded-xl text-xs font-black shadow-md transition-all flex items-center gap-1.5 shrink-0"
+              >
+                <span>تحديث التطبيق ومسح التخزين 🔄</span>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Modern Global Nav Navigation Header */}
       <header className="sticky top-0 bg-white/80 backdrop-blur-md border-b border-gray-100 z-40 transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
@@ -481,30 +603,43 @@ export default function App() {
             </div>
           </div>
 
-          {/* Core toggle tabs at header */}
-          <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-2xl border border-gray-100">
+          <div className="flex items-center gap-2">
+            {/* Quick manual Force Update button for PWA sync */}
             <button
-              onClick={() => setViewMode('store')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all ${
-                viewMode === 'store'
-                  ? 'bg-white text-[#b7336a] shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
+              type="button"
+              onClick={handleForceUpdate}
+              title="تحديث التطبيق ومسح التخزين المؤقت"
+              className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-rose-50 hover:bg-rose-100 border border-rose-100/60 rounded-2xl text-[#b7336a] transition-all flex items-center gap-1 text-[10px] sm:text-xs font-extrabold shadow-sm"
             >
-              <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              <span>تصفح العروض ✨</span>
+              <span className="animate-spin duration-1000">🔄</span>
+              <span>تحديث السحاب ⚡</span>
             </button>
-            <button
-              onClick={() => setViewMode('admin')}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all ${
-                viewMode === 'admin'
-                  ? 'bg-white text-[#b7336a] shadow-sm'
-                  : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              <Lock className="w-3.5 h-3.5 shrink-0" />
-              <span>بوابة الإدارة 🔐</span>
-            </button>
+
+            {/* Core toggle tabs at header */}
+            <div className="flex items-center gap-1.5 bg-gray-50 p-1 rounded-2xl border border-gray-100">
+              <button
+                onClick={() => setViewMode('store')}
+                className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all ${
+                  viewMode === 'store'
+                    ? 'bg-white text-[#b7336a] shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                <span>تصفح العروض ✨</span>
+              </button>
+              <button
+                onClick={() => setViewMode('admin')}
+                className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all ${
+                  viewMode === 'admin'
+                    ? 'bg-white text-[#b7336a] shadow-sm'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5 shrink-0" />
+                <span>بوابة الإدارة 🔐</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -555,6 +690,7 @@ export default function App() {
                     firestoreStatus={firestoreStatus}
                     firestoreError={firestoreError}
                     rawMargin={rawMargin}
+                    agents={agents}
                   />
                 </div>
               ) : (
@@ -621,10 +757,12 @@ export default function App() {
                           </div>
                           <div>
                             <h2 className="text-lg font-black text-gray-900 leading-tight">
-                              مرحباً بك، التاجر المعتمد 👋
+                              مرحباً بك، التاجر {currentMerchant ? currentMerchant.name : 'المعتمد'} 👋
                             </h2>
                             <span className="text-xs text-gray-400 font-bold block leading-none mt-1">
-                              لديك كامل الصلاحيات لتنظيم أو تعديل أو حظر أي عروض مدرجة.
+                              {currentMerchant 
+                                ? `أنت تسجل المنتجات الآن تحت رمز المندوب الخاص بك: (${currentMerchant.mCode})` 
+                                : 'لديك كامل الصلاحيات لتنظيم أو تعديل أو حظر أي عروض مدرجة.'}
                             </span>
                           </div>
                         </div>
@@ -632,7 +770,7 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <div className="hidden sm:flex items-center gap-1 bg-gray-50/50 px-3 py-1.5 rounded-xl border border-gray-100 text-[10px] text-gray-400 font-bold font-mono">
                             <User className="w-3.5 h-3.5 text-gray-400" />
-                            <span>khaiaaikhuiaifi1990@gmail.com</span>
+                            <span>{currentMerchant ? currentMerchant.phone : 'تاجر غير محدد'}</span>
                           </div>
                           <button
                             onClick={handleLogout}
@@ -655,6 +793,7 @@ export default function App() {
                             margin={margin}
                             marginRaw={rawMargin}
                             categories={categories}
+                            currentMerchant={currentMerchant}
                           />
                         </div>
 
@@ -708,7 +847,7 @@ export default function App() {
                             </div>
 
                             <ProductList
-                              products={products}
+                              products={(userRole === 'merchant' && currentMerchant) ? merchantProducts : products}
                               onEdit={(p) => {
                                 setEditingProduct(p);
                                 document.getElementById('product-form-card')?.scrollIntoView({ behavior: 'smooth' });

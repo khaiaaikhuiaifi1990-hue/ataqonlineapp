@@ -84,11 +84,75 @@
       })();
     </script>
     <script>
-      // Register Service Worker for PWA / Google Play readiness
+      // Automatic Version Check & Cache Purging (Solves aggressive PWA caching completely)
+      async function checkAppVersion() {
+        try {
+          const response = await fetch('/version.json?t=' + Date.now(), { cache: 'no-store' });
+          if (response.ok) {
+            const data = await response.json();
+            const serverVersion = data.version;
+            const currentVersion = parseInt(localStorage.getItem('ataq_app_version') || '0', 10);
+            
+            if (currentVersion !== 0 && serverVersion > currentVersion) {
+              console.log('🔄 New app version detected:', serverVersion, 'Local:', currentVersion);
+              
+              // 1. Unregister all service workers
+              if ('serviceWorker' in navigator) {
+                const registrations = await navigator.serviceWorker.getRegistrations();
+                for (const reg of registrations) {
+                  await reg.unregister();
+                }
+              }
+              
+              // 2. Clear all cache storages
+              if ('caches' in window) {
+                const keys = await caches.keys();
+                for (const key of keys) {
+                  await caches.delete(key);
+                }
+              }
+              
+              // 3. Save new version and do a hard reload
+              localStorage.setItem('ataq_app_version', serverVersion);
+              window.location.reload();
+            } else if (currentVersion === 0 || isNaN(currentVersion)) {
+              localStorage.setItem('ataq_app_version', serverVersion);
+            }
+          }
+        } catch (e) {
+          console.warn('⚠️ Version check skipped or failed:', e);
+        }
+      }
+
+      // Check on load
+      checkAppVersion();
+
+      // Check on tab focus or visibility change
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          checkAppVersion();
+        }
+      });
+
+      // Check every 30 seconds
+      setInterval(checkAppVersion, 30000);
+
+      // Register Service Worker for PWA
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js')
-            .then(reg => console.log('🚀 Service Worker registered successfully:', reg.scope))
+            .then(reg => {
+              console.log('🚀 Service Worker registered successfully:', reg.scope);
+              
+              // Handle active controller changes
+              let refreshing = false;
+              navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (!refreshing) {
+                  refreshing = true;
+                  window.location.reload();
+                }
+              });
+            })
             .catch(err => console.error('❌ Service Worker registration failed:', err));
         });
       }

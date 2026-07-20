@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Lock, Eye, EyeOff, ShieldCheck, Users } from 'lucide-react';
+import { Agent } from '../types';
 
 interface LoginScreenProps {
-  onLoginSuccess: (pin: string, role: 'merchant' | 'owner') => void;
+  onLoginSuccess: (pin: string, role: 'merchant' | 'owner', selectedAgent?: Agent | null) => void;
   adminPasswordLive: string;
   ownerPasswordLive: string;
   firestoreStatus: 'loading' | 'connected' | 'missing' | 'error';
   firestoreError: string | null;
   rawMargin: number;
+  agents: Agent[];
 }
 
 export default function LoginScreen({
@@ -18,8 +20,10 @@ export default function LoginScreen({
   firestoreStatus,
   firestoreError,
   rawMargin,
+  agents,
 }: LoginScreenProps) {
   const [loginRole, setLoginRole] = useState<'merchant' | 'owner'>('merchant');
+  const [selectedAgentId, setSelectedAgentId] = useState('');
   const [pinInput, setPinInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -30,19 +34,36 @@ export default function LoginScreen({
     const cleanPin = pinInput.trim();
     
     if (loginRole === 'merchant') {
-      if (cleanPin === adminPasswordLive) {
+      const activeAgents = agents.filter(a => a.status !== 'suspended');
+      const selectedAgent = agents.find(a => a.id === selectedAgentId) || null;
+
+      if (activeAgents.length > 0 && !selectedAgentId) {
+        triggerShake('يرجى اختيار اسم التاجر/المندوب من القائمة أولاً! ⚠️');
+        return;
+      }
+
+      const expectedPassword = selectedAgent?.password || adminPasswordLive;
+
+      if (cleanPin === expectedPassword) {
         localStorage.setItem('adminPin', cleanPin);
         localStorage.setItem('adminRole', 'merchant');
-        onLoginSuccess(cleanPin, 'merchant');
+        
+        if (selectedAgent) {
+          localStorage.setItem('merchantAgent', JSON.stringify(selectedAgent));
+        } else {
+          localStorage.removeItem('merchantAgent');
+        }
+
+        onLoginSuccess(cleanPin, 'merchant', selectedAgent);
         setErrorMsg('');
       } else {
-        triggerShake('رمز المندوبين السري غير صحيح ❌');
+        triggerShake('الرمز السري الخاص بالتاجر غير صحيح ❌');
       }
     } else {
       if (cleanPin === ownerPasswordLive || cleanPin === '73338835' || cleanPin === '888888') {
         localStorage.setItem('adminPin', cleanPin);
         localStorage.setItem('adminRole', 'owner');
-        onLoginSuccess(cleanPin, 'owner');
+        onLoginSuccess(cleanPin, 'owner', null);
         setErrorMsg('');
       } else {
         triggerShake('رمز المدير العام السري غير صحيح ❌');
@@ -57,6 +78,8 @@ export default function LoginScreen({
     setTimeout(() => setIsShaking(false), 500);
   };
 
+  const activeAgents = agents.filter(a => a.status !== 'suspended');
+
   return (
     <div id="login-container" className="flex flex-col items-center justify-center min-h-[80vh] py-6 px-4 gap-6" dir="rtl">
       {/* Visual Role Switcher Tab */}
@@ -67,6 +90,7 @@ export default function LoginScreen({
             setLoginRole('merchant');
             setErrorMsg('');
             setPinInput('');
+            setSelectedAgentId('');
           }}
           className={`flex-1 py-3 px-4 rounded-xl text-xs sm:text-xs font-bold transition-all flex items-center justify-center gap-2 ${
             loginRole === 'merchant'
@@ -123,17 +147,37 @@ export default function LoginScreen({
           <p className="text-gray-500 text-xs sm:text-sm mb-6 leading-relaxed px-2 font-medium">
             {loginRole === 'owner'
               ? 'يرجى إدخال رمز المالك العام لتغيير هوامش الأرباح وتعديل رموز الفواتير والتحكم بحسابات المناديب.'
-              : 'يرجى إدخال رمز الوصول المعتمد لك كتاجر أو مندوب في عتق أونلاين لإدراج وتعديل عروض منتجاتك.'}
+              : 'يرجى اختيار اسمك من القائمة وإدخال الرمز السري المشترك للتأكيد لتعديل وإدراج عروض منتجاتك.'}
           </p>
 
           <form onSubmit={handleLogin} action="javascript:void(0);" className="w-full space-y-5">
-            <div className="relative">
+            {loginRole === 'merchant' && activeAgents.length > 0 && (
+              <div className="space-y-1.5 text-right w-full" dir="rtl">
+                <label className="block text-xs font-bold text-gray-700">
+                  اختر اسمك كتاجر/مندوب معتمد:
+                </label>
+                <select
+                  value={selectedAgentId}
+                  onChange={(e) => setSelectedAgentId(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-2xl text-xs sm:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-[#b7336a]/20 focus:border-[#b7336a] text-gray-800"
+                >
+                  <option value="">-- اختر من القائمة --</option>
+                  {activeAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name} (رمز: {agent.mCode})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="relative w-full">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
                 maxLength={12}
-                placeholder={loginRole === 'owner' ? 'أدخل رمز المالك...' : 'أدخل رمز المندوب...'}
+                placeholder={loginRole === 'owner' ? 'أدخل رمز المالك...' : 'أدخل رمز المندوب المشترك...'}
                 className="w-full px-5 py-4 bg-gray-50/50 border border-gray-200 rounded-2xl text-center font-mono text-xl tracking-[0.25em] font-bold focus:outline-none focus:ring-2 focus:ring-[#b7336a]/20 focus:border-[#b7336a] transition-all"
                 dir="ltr"
               />
@@ -171,6 +215,36 @@ export default function LoginScreen({
             🛡️ نظام عتق أونلاين المشفر
             <br />
             تتم مزامنة الرموز فورياً عبر السحاب لحماية بيانات التجار
+          </div>
+
+          {/* Force Update/Cache Clear Button */}
+          <div className="mt-4 pt-4 border-t border-gray-100 flex flex-col items-center">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  if ('serviceWorker' in navigator) {
+                    const registrations = await navigator.serviceWorker.getRegistrations();
+                    for (const reg of registrations) {
+                      await reg.update();
+                    }
+                  }
+                  if ('caches' in window) {
+                    const keys = await caches.keys();
+                    for (const key of keys) {
+                      await caches.delete(key);
+                    }
+                  }
+                  window.location.reload();
+                } catch (e) {
+                  window.location.reload();
+                }
+              }}
+              className="text-xs text-gray-400 hover:text-[#b7336a] transition-colors flex items-center gap-1 bg-gray-50 hover:bg-gray-100 py-1.5 px-3 rounded-full font-medium"
+            >
+              <span>تحديث التطبيق ومسح التخزين المؤقت 🔄</span>
+            </button>
+            <p className="text-[9px] text-gray-300 mt-1">إذا لم تظهر التحديثات الجديدة، اضغط لتنظيف الذاكرة</p>
           </div>
         </div>
       </motion.div>
