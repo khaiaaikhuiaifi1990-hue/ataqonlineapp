@@ -10,20 +10,25 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <script>
-      // Intercept and mock Vite HMR WebSocket connection to prevent periodic reload loops in proxy/cloud environments
+      // Intercept and mock Vite HMR WebSocket connection ONLY in dev environments to prevent reload loops
       (function() {
+        const isDevEnv = window.location.hostname.includes('ais-dev') || 
+                         window.location.hostname === 'localhost' || 
+                         window.location.hostname === '127.0.0.1';
+        
+        if (!isDevEnv) return; // Do not mock WebSockets in production (Vercel, etc.)
+
         const OriginalWebSocket = window.WebSocket;
         if (OriginalWebSocket) {
           window.WebSocket = function(url, protocols) {
             const isViteHmr = typeof url === 'string' && (
               url.includes('vite') || 
               url.includes('hmr') || 
-              url.includes('3000') ||
-              url.includes(window.location.hostname)
+              url.includes('3000')
             ) && !url.includes('firebase');
 
             if (isViteHmr) {
-              console.log('🛡️ Intercepted and mocked Vite HMR WebSocket as ALWAYS OPEN to prevent reload loop:', url);
+              console.log('🛡️ Intercepted dev Vite HMR WebSocket:', url);
               
               const mockWS = {
                 url: url,
@@ -33,12 +38,8 @@
                 protocol: '',
                 binaryType: 'blob',
                 
-                send: function(data) {
-                  // No-op
-                },
-                close: function() {
-                  // No-op
-                },
+                send: function(data) {},
+                close: function() {},
                 
                 onopen: null,
                 onerror: null,
@@ -50,13 +51,10 @@
                   if (!this._listeners[type]) this._listeners[type] = [];
                   this._listeners[type].push(listener);
                   
-                  // Trigger open event to make Vite believe connection succeeded
                   if (type === 'open') {
                     setTimeout(() => {
                       if (typeof this.onopen === 'function') this.onopen();
-                      try {
-                        listener({ type: 'open' });
-                      } catch (e) {}
+                      try { listener({ type: 'open' }); } catch (e) {}
                     }, 50);
                   }
                 },
@@ -65,9 +63,7 @@
                     this._listeners[type] = this._listeners[type].filter(l => l !== listener);
                   }
                 },
-                dispatchEvent: function(event) {
-                  return true;
-                }
+                dispatchEvent: function(event) { return true; }
               };
               
               setTimeout(() => {
