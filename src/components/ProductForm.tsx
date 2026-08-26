@@ -1,546 +1,669 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Camera, RefreshCw, X, Tag, Calendar, DollarSign, Type, FileText, Palette, Trash2 } from 'lucide-react';
-import { Product, Category, Agent } from '../types';
+import React, { useState, useEffect } from 'react';
+import { 
+  X, 
+  Upload, 
+  Sparkles, 
+  Calculator, 
+  Check, 
+  AlertCircle,
+  Tag,
+  DollarSign,
+  Layers,
+  Store,
+  Phone,
+  MapPin,
+  Calendar,
+  Image as ImageIcon,
+  Trash2,
+  Clock,
+  Shirt,
+  Palette,
+  FileText,
+  Hash,
+  HelpCircle,
+  Loader2,
+  CheckCircle2,
+  Rocket
+} from 'lucide-react';
+import { Product, Merchant } from '../types';
+import { compressAndOptimizeImage } from '../utils/imageOptimizer';
+import { FastImage } from './FastImage';
 
 interface ProductFormProps {
-  onPublish: (data: Omit<Product, 'id' | 'status'>) => Promise<void>;
-  editingProduct: Product | null;
-  onCancelEdit: () => void;
-  margin: number;       // e.g. 1.50
-  marginRaw: number;    // e.g. 50%
-  categories: Category[];
-  currentMerchant?: Agent | null;
+  initialProduct?: Product | null;
+  categories?: string[];
+  profitMarginPercent?: number;
+  activeMerchant?: Merchant | null;
+  onSave: (product: Product) => void;
+  onClose: () => void;
 }
 
-const DURATIONS = [
-  { value: '1', label: '⏱️ يوم واحد (24 ساعة)' },
-  { value: '2', label: '⏱️ يومين (48 ساعة)' },
-  { value: '3', label: '⏱️ 3 أيام (72 ساعة)' },
-  { value: '4', label: '⏱️ 4 أيام (96 ساعة)' },
-  { value: '5', label: '⏱️ 5 أيام (120 ساعة)' },
-  { value: '6', label: '⏱️ 6 أيام (144 ساعة)' },
-  { value: '7', label: '⏱️ أسبوع كامل (168 ساعة)' },
-  { value: '999', label: '♾️ عرض مستمر' },
+const DEFAULT_FORM_CATEGORIES: string[] = [
+  'عروض خاصة',
+  'ملابس نسائية',
+  'عالم الأطفال',
+  'تجميل وإكسسوارات',
+  'المطبخ الحديثة',
+  'مفروشات',
+  'أحذية',
+  'إكسسوارات الجوالات',
+  'إلكترونيات وجوالات',
+  'سوبرماركت ومواد غذائية',
+  'عطور وبخور',
+  'مطاعم وكافيهات'
 ];
 
-export default function ProductForm({ onPublish, editingProduct, onCancelEdit, margin, marginRaw, categories, currentMerchant }: ProductFormProps) {
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('');
-  const [duration, setDuration] = useState('1');
-  const [costPrice, setCostPrice] = useState('');
-  const [mCode, setMCode] = useState('');
-  const [desc, setDesc] = useState('');
-  const [sizes, setSizes] = useState('');
-  const [imgs, setImgs] = useState<(string | null)[]>([null, null, null, null]);
-  const [isUploading, setIsUploading] = useState<boolean[]>([false, false, false, false]);
-  const [errorText, setErrorText] = useState('');
-  const [statusText, setStatusText] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+interface ImageSlot {
+  title: string;
+  subtitle: string;
+  url: string;
+  thumbnail: string;
+}
 
-  // Auto set mCode when currentMerchant changes
-  useEffect(() => {
-    if (currentMerchant) {
-      setMCode(currentMerchant.mCode);
+export const ProductForm: React.FC<ProductFormProps> = ({
+  initialProduct,
+  categories: customCategories,
+  profitMarginPercent = 20,
+  activeMerchant,
+  onSave,
+  onClose
+}) => {
+  const formCategories = (customCategories && customCategories.length > 0)
+    ? customCategories.filter((c) => c !== 'الكل' && c !== 'عروض حصرية')
+    : DEFAULT_FORM_CATEGORIES;
+
+  // 1. Photos State (Up to 4 images)
+  const [images, setImages] = useState<ImageSlot[]>([
+    {
+      title: 'الصورة الأساسية / المظهرية',
+      subtitle: 'الواجهة الرئيسية للعرض',
+      url: initialProduct?.image || '',
+      thumbnail: initialProduct?.thumbnail || ''
+    },
+    {
+      title: 'صورة اللون الثاني',
+      subtitle: 'اختياري - مظهر لون إضافي',
+      url: initialProduct?.additionalImages?.[0] || '',
+      thumbnail: ''
+    },
+    {
+      title: 'صورة اللون الثالث',
+      subtitle: 'اختياري - زاوية أو لون آخر',
+      url: initialProduct?.additionalImages?.[1] || '',
+      thumbnail: ''
+    },
+    {
+      title: 'صورة اللون الرابع / التفاصيل',
+      subtitle: 'اختياري - مقاسات أو مواصفات',
+      url: initialProduct?.additionalImages?.[2] || '',
+      thumbnail: ''
     }
-  }, [currentMerchant]);
+  ]);
 
-  // File input refs
-  const fileRefs = [
-    useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null),
-  ];
+  // 2. Product Name
+  const [name, setName] = useState(initialProduct?.name || '');
 
-  // Set default category when categories list loads
-  useEffect(() => {
-    if (!category && categories && categories.length > 0) {
-      setCategory(categories[0].value);
-    }
-  }, [categories, category]);
+  // 3. Category
+  const [category, setCategory] = useState<string>(
+    initialProduct?.category || formCategories[0] || 'ملابس نسائية'
+  );
 
-  // Sync edit product
-  useEffect(() => {
-    if (editingProduct) {
-      setName(editingProduct.name || '');
-      setCategory(editingProduct.category || (categories[0]?.value || ''));
-      setMCode(editingProduct.mCode || '');
-      setDesc(editingProduct.about || '');
-      setSizes(editingProduct.sizes || '');
-      setCostPrice(editingProduct.costPrice ? editingProduct.costPrice.toString() : '');
+  // 4. Offer Duration (Days)
+  const [durationOption, setDurationOption] = useState<string>(
+    initialProduct?.offerDurationDays 
+      ? String(initialProduct.offerDurationDays) 
+      : (initialProduct?.isOffer === false ? 'unlimited' : '3')
+  );
 
-      // Parse expiry to duration
-      if (editingProduct.expiry > 9000000000000) {
-        setDuration('999');
-      } else {
-        const diffMs = editingProduct.expiry - Date.now();
-        const days = Math.round(diffMs / (24 * 60 * 60 * 1000));
-        const cleanDays = Math.max(1, Math.min(7, days)).toString();
-        setDuration(cleanDays);
-      }
+  // 5. Merchant Code (mCode)
+  const [mCode, setMCode] = useState<string>(
+    initialProduct?.mCode || activeMerchant?.mCode || '1'
+  );
 
-      // Fill images
-      const initialImgs: (string | null)[] = [null, null, null, null];
-      if (editingProduct.imgs) {
-        editingProduct.imgs.forEach((img, i) => {
-          if (i < 4) initialImgs[i] = img;
-        });
-      }
-      setImgs(initialImgs);
-      setErrorText('');
-    } else {
-      resetForm();
-    }
-  }, [editingProduct]);
+  // 6. Cost Price
+  const [costPrice, setCostPrice] = useState<number | ''>(
+    initialProduct?.costPrice || ''
+  );
 
-  const resetForm = () => {
-    setName('');
-    setCategory('ملابس نسائية');
-    setDuration('1');
-    setCostPrice('');
-    setMCode(currentMerchant ? currentMerchant.mCode : '');
-    setDesc('');
-    setSizes('');
-    setImgs([null, null, null, null]);
-    setErrorText('');
-    setStatusText('');
-  };
+  // 7. Description & Specifications
+  const [description, setDescription] = useState(initialProduct?.description || '');
 
-  const getDurationText = (daysStr: string) => {
-    const d = parseInt(daysStr);
-    if (d === 1) return 'يوم واحد';
-    if (d === 2) return 'يومين';
-    if (d === 3) return '3 أيام';
-    if (d === 4) return '4 أيام';
-    if (d === 5) return '5 أيام';
-    if (d === 6) return '6 أيام';
-    if (d === 7) return 'أسبوع';
-    if (d === 999) return '♾️ عرض مستمر';
-    return 'مؤقت لفترة محدودة';
-  };
+  // 8. Sizes and Colors
+  const [sizes, setSizes] = useState(initialProduct?.sizes || '');
+  const [colors, setColors] = useState(initialProduct?.colors || '');
+  const [quantity, setQuantity] = useState<number>(initialProduct?.quantity || 12);
 
-  const triggerUploadInput = (index: number) => {
-    fileRefs[index].current?.click();
-  };
+  // Additional Meta
+  const [merchantName, setMerchantName] = useState(
+    initialProduct?.merchantName || activeMerchant?.name || 'عتق أونلاين (1)'
+  );
+  const [merchantPhone, setMerchantPhone] = useState(
+    initialProduct?.merchantPhone || activeMerchant?.phone || '967770000001'
+  );
+  const [merchantLocation, setMerchantLocation] = useState(
+    initialProduct?.merchantLocation || activeMerchant?.location || 'عتق - الشارع العام'
+  );
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
+  // UI States
+  const [compressingIndex, setCompressingIndex] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishProgress, setPublishProgress] = useState(0);
+  const [publishStepText, setPublishStepText] = useState('');
 
-    if (file.size > 2 * 1024 * 1024) {
-      setErrorText('حجم الصورة يجب أن يكون أقل من 2 ميغابايت (2MB) ⚠️');
-      return;
-    }
+  // Auto calculate suggested customer price based on cost & margin in background
+  const numCost = Number(costPrice) || 0;
 
-    const updatedUploading = [...isUploading];
-    updatedUploading[index] = true;
-    setIsUploading(updatedUploading);
-
+  // Handle Image Upload for a specific slot
+  const handleUploadSlot = async (index: number, file: File) => {
     try {
-      const compressedBase64 = await compressImageFile(file);
-      const updatedImgs = [...imgs];
-      updatedImgs[index] = compressedBase64;
-      setImgs(updatedImgs);
-      setErrorText('');
+      setCompressingIndex(index);
+      setErrorMsg('');
+      const compressed = await compressAndOptimizeImage(file, 900, 900, 0.8);
+      
+      setImages((prev) => {
+        const next = [...prev];
+        next[index] = {
+          ...next[index],
+          url: compressed.full,
+          thumbnail: compressed.thumbnail
+        };
+        return next;
+      });
     } catch (err) {
-      console.error(err);
-      setErrorText('حدث خطأ أثناء معالجة ضغط الصورة ❌');
+      console.error('Failed to compress image:', err);
+      setErrorMsg(`فشل في معالجة الصورة رقم ${index + 1}. يرجى اختيار صورة بصيغة أخرى.`);
     } finally {
-      const finishedUploading = [...isUploading];
-      finishedUploading[index] = false;
-      setIsUploading(finishedUploading);
+      setCompressingIndex(null);
     }
   };
 
-  const compressImageFile = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Failed to create canvas context'));
-            return;
-          }
-
-          const MAX_WIDTH = 480;
-          const scale = MAX_WIDTH / img.width;
-          canvas.width = MAX_WIDTH;
-          canvas.height = img.height * scale;
-
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const base64 = canvas.toDataURL('image/jpeg', 0.5);
-          resolve(base64);
-        };
-        img.onerror = () => reject(new Error('Image load error'));
-        img.src = e.target?.result as string;
+  const handleRemoveImage = (index: number) => {
+    setImages((prev) => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        url: '',
+        thumbnail: ''
       };
-      reader.onerror = () => reject(new Error('File reader error'));
-      reader.readAsDataURL(file);
+      return next;
     });
   };
 
-  const clearImageSlot = (e: React.MouseEvent, index: number) => {
-    e.stopPropagation();
-    const updatedImgs = [...imgs];
-    updatedImgs[index] = null;
-    setImgs(updatedImgs);
-    if (fileRefs[index].current) {
-      fileRefs[index].current.value = '';
-    }
-  };
-
-  const handleFormSubmit = async (e: React.FormEvent) => {
+  // Submit and Launch 8-Step Product
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorText('');
-    setStatusText('');
+    setErrorMsg('');
 
-    const parsedCost = parseFloat(costPrice);
-    const finalImages = imgs.filter((img) => img !== null) as string[];
+    // Validation
+    const primaryImg = images[0].url.trim();
+    if (!primaryImg) {
+      setErrorMsg('الخطوة 1: يرجى إضافة الصورة الأساسية / المظهرية للمنتج على الأقل.');
+      return;
+    }
 
     if (!name.trim()) {
-      setErrorText('يرجى تحديد اسم المنتج أو لوحة العرض ⚠️');
-      return;
-    }
-    if (finalImages.length === 0) {
-      setErrorText('يرجى رفع الصورة الأساسية على الأقل للمنتج (مطلوبة) 📸');
-      return;
-    }
-    if (isNaN(parsedCost) || parsedCost <= 0) {
-      setErrorText('يرجى تحديد سعر تكلفة المنتج الأصلي بشكل صحيح 💰');
+      setErrorMsg('الخطوة 2: يرجى كتابة اسم المنتج التجاري.');
       return;
     }
 
-    setIsSubmitting(true);
-    setStatusText(editingProduct ? 'جاري حفظ التعديلات... ⚙️' : 'جاري نشر العرض الجديد... 🚀');
-
-    try {
-      const days = parseInt(duration);
-      const calculatedExpiry = days === 999 
-        ? 9999999999999 
-        : Date.now() + days * 24 * 60 * 60 * 1000;
-      
-      const calculatedPrice = Math.round(parsedCost * margin);
-
-      const productPayload = {
-        name: name.trim(),
-        category,
-        mCode: mCode.trim(),
-        costPrice: parsedCost,
-        price: calculatedPrice,
-        about: desc.trim(),
-        sizes: sizes.trim(),
-        imgs: finalImages,
-        expiry: calculatedExpiry,
-        durationText: getDurationText(duration),
-      };
-
-      await onPublish(productPayload);
-      resetForm();
-    } catch (err: any) {
-      console.error(err);
-      setErrorText(err?.message || 'حصل خطأ ما أثناء الاتصال بقاعدة البيانات');
-    } finally {
-      setIsSubmitting(false);
+    if (!costPrice || numCost <= 0) {
+      setErrorMsg('الخطوة 6: يرجى إدخال سعر شراء المنتج (التكلفة) بالريال.');
+      return;
     }
+
+    // Automated silent background calculation using owner profit margin
+    const marginMultiplier = 1 + (profitMarginPercent || 20) / 100;
+    const finalCustomerPrice = Math.round(numCost * marginMultiplier);
+    const finalOriginalPrice = Math.round(finalCustomerPrice * 1.25);
+
+    // Determine Expiry Date & Offer Status
+    const isUnlimited = durationOption === 'unlimited';
+    const days = isUnlimited ? 365 : parseInt(durationOption, 10) || 3;
+    const expiryDate = isUnlimited 
+      ? undefined 
+      : new Date(Date.now() + days * 86400000).toISOString();
+
+    const durationTextMap: Record<string, string> = {
+      '1': 'يوم واحد (24 ساعة)',
+      '2': 'يومين (48 ساعة)',
+      '3': '3 أيام (72 ساعة)',
+      '4': '4 أيام (96 ساعة)',
+      '5': '5 أيام (120 ساعة)',
+      '6': '6 أيام (144 ساعة)',
+      '7': 'أسبوع كامل (168 ساعة)',
+      'unlimited': 'عرض مستمر'
+    };
+
+    // Filter secondary images
+    const extraImages = images.slice(1).map(img => img.url.trim()).filter(Boolean);
+
+    const productPayload: Product = {
+      id: initialProduct?.id || `prod-${Date.now()}`,
+      name: name.trim(),
+      category,
+      description: description.trim() || `عرض مميز متوفر لدى ${merchantName} في مدينة عتق.`,
+      originalPrice: finalOriginalPrice,
+      discountPrice: finalCustomerPrice,
+      costPrice: numCost,
+      quantity: Number(quantity) || 1,
+      image: primaryImg,
+      thumbnail: images[0].thumbnail || primaryImg,
+      additionalImages: extraImages,
+      mCode: mCode.trim() || activeMerchant?.mCode || '1',
+      sizes: sizes.trim() || undefined,
+      colors: colors.trim() || undefined,
+      merchantId: activeMerchant?.id || initialProduct?.merchantId || 'merch-staff-1',
+      merchantName: merchantName.trim() || 'عتق أونلاين (1)',
+      merchantPhone: merchantPhone.trim() || '967770000001',
+      merchantLocation: merchantLocation.trim() || 'عتق - الشارع العام',
+      isOffer: !isUnlimited,
+      offerEndsAt: expiryDate,
+      offerDurationDays: days,
+      offerDurationText: durationTextMap[durationOption] || `${days} أيام`,
+      createdAt: initialProduct?.createdAt || Date.now(),
+      status: Number(quantity) > 0 ? 'active' : 'out_of_stock'
+    };
+
+    // Trigger Publishing Transition
+    setIsPublishing(true);
+    setPublishProgress(15);
+    setPublishStepText('جاري فحص وضغط صور المنتج والتفاصيل...');
+
+    setTimeout(() => {
+      setPublishProgress(55);
+      setPublishStepText('جاري ربط كود المندوب وتجهيز العرض للمتجر...');
+    }, 450);
+
+    setTimeout(() => {
+      setPublishProgress(85);
+      setPublishStepText('جاري تثبيت العرض في قاعدة بيانات متجر عتق...');
+    }, 900);
+
+    setTimeout(() => {
+      setPublishProgress(100);
+      setPublishStepText('تم تثبيت العرض بنجاح وإرسال الإشعار التلقائي للزبائن! 🛍️🚀');
+      setTimeout(() => {
+        onSave(productPayload);
+      }, 400);
+    }, 1350);
   };
 
-  const currentCost = parseFloat(costPrice) || 0;
-  const estimatedSellingPrice = Math.round(currentCost * margin);
-
   return (
-    <div id="product-form-card" className="bg-white border border-gray-100 rounded-3xl shadow-xl shadow-rose-950/[0.02] p-6 text-right" dir="rtl">
-      <div className="flex items-center justify-between border-b border-gray-50 pb-4 mb-6">
-        <h3 className="text-xl font-bold text-[#b7336a] flex items-center gap-2">
-          {editingProduct ? '✏️ تعديل وتحديث بيانات العرض الساري' : '✨ إضافة ونشر عرض تجاري جديد'}
-        </h3>
-        {editingProduct && (
+    <div 
+      id="product-form-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 backdrop-blur-md overflow-y-auto animate-fadeIn"
+    >
+      <div 
+        id="product-form-container"
+        className="w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col my-auto max-h-[94vh] relative"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-linear-to-r from-slate-900 via-slate-800 to-slate-900 text-white shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-900/30">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base sm:text-lg font-black">
+                {initialProduct ? 'تعديل وتحديث العرض التجاري' : 'إضافة ونشر عرض تجاري جديد (8 خطوات)'}
+              </h2>
+              <p className="text-[11px] text-slate-300 font-medium">
+                بوابة التاجر والمندوب المعتمد - عتق أونلاين
+              </p>
+            </div>
+          </div>
+
           <button
-            onClick={onCancelEdit}
-            className="text-xs bg-gray-100 text-gray-500 hover:bg-gray-200 px-3 py-1.5 rounded-xl font-bold transition-all"
+            onClick={onClose}
+            className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors"
           >
-            إلغاء التعديل ✖
+            <X className="w-5 h-5" />
           </button>
-        )}
-      </div>
-
-      {/* Informational Header Tip */}
-      <div className="bg-gray-50 border border-gray-100 text-gray-700 p-4 rounded-2xl mb-6 text-sm flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 bg-[#b7336a] rounded-full" />
-          <span className="font-semibold">
-            لوحة نشر عروض التجار والمندوبين المعتمدين في عتق أونلاين
-          </span>
         </div>
-        <span className="text-xs text-gray-400 font-medium">مزامنة تامة حية</span>
-      </div>
 
-      <form onSubmit={handleFormSubmit} action="javascript:void(0);" className="space-y-6">
-        {/* Step 1: Photos uploading slots */}
-        <div>
-          <label className="block text-sm font-bold text-gray-700 mb-3">
-            1. صور المنتج المتوفرة وخيارات الألوان والقياسات (حتى 4 صور مستقلة):
-          </label>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[0, 1, 2, 3].map((idx) => {
-              const currentImg = imgs[idx];
-              const slotLabels = [
-                'الصورة الأساسية (مطلوبة)',
-                'اللون الثاني (تفاصيل)',
-                'اللون الثالث (تفاصيل)',
-                'اللون الرابع (تفاصيل)',
-              ];
-              return (
-                <div
-                  key={`image-slot-${idx}`}
-                  onClick={() => triggerUploadInput(idx)}
-                  className={`relative border-2 border-dashed rounded-2xl h-28 flex flex-col items-center justify-center cursor-pointer overflow-hidden transition-all text-center p-2 group ${
-                    currentImg
-                      ? 'border-emerald-200 bg-emerald-50/10'
-                      : 'border-rose-100 hover:border-[#b7336a] bg-rose-50/10 hover:bg-rose-50/30'
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="p-4 sm:p-6 overflow-y-auto space-y-6 flex-1 text-slate-800">
+          {errorMsg && (
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs sm:text-sm font-bold flex items-center gap-2.5 animate-fadeIn">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          {/* ═════════ STEP 1: PHOTOS (UP TO 4 INDEPENDENT SLOTS) ═════════ */}
+          <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  1
+                </span>
+                <label className="text-sm font-black text-slate-900">
+                  صور المنتج (حتى 4 صور مستقلة)
+                </label>
+              </div>
+              <span className="text-[11px] font-bold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
+                ضغط فوري وتجهيز 0ms
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+              {images.map((slot, idx) => (
+                <div 
+                  key={idx} 
+                  className={`p-3 rounded-2xl border transition-all flex flex-col items-center justify-between min-h-[160px] relative ${
+                    slot.url 
+                      ? 'bg-white border-rose-200 shadow-xs' 
+                      : 'bg-white/80 border-dashed border-slate-300 hover:border-rose-400'
                   }`}
                 >
-                  <input
-                    type="file"
-                    ref={fileRefs[idx]}
-                    onChange={(e) => handleFileChange(e, idx)}
-                    accept="image/*"
-                    className="hidden"
-                  />
+                  <div className="text-center w-full">
+                    <span className="text-[11px] font-black text-slate-800 block truncate">
+                      {idx === 0 ? '⭐️ الصورة الأساسية' : `صورة ${idx + 1}`}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block truncate mb-2">
+                      {slot.title}
+                    </span>
+                  </div>
 
-                  {currentImg ? (
-                    <>
-                      <img src={currentImg} alt="Preview" className="w-full h-full object-cover rounded-lg" />
-                      <button
-                        type="button"
-                        onClick={(e) => clearImageSlot(e, idx)}
-                        className="absolute top-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white w-6 h-6 rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10"
-                        title="حذف الصورة"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  ) : isUploading[idx] ? (
-                    <div className="flex flex-col items-center gap-1.5">
-                      <RefreshCw className="w-5 h-5 text-[#b7336a] animate-spin" />
-                      <span className="text-[10px] text-gray-400 font-bold">جاري الضغط...</span>
+                  {slot.url ? (
+                    <div className="relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 group bg-slate-100">
+                      <FastImage
+                        src={slot.url}
+                        thumbnail={slot.thumbnail}
+                        alt={`صورة ${idx + 1}`}
+                        aspectRatio="aspect-square"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <label className="p-1.5 bg-white text-slate-800 rounded-lg cursor-pointer hover:bg-slate-100 shadow-sm">
+                          <Upload className="w-3.5 h-3.5" />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) handleUploadSlot(idx, f);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage(idx)}
+                          className="p-1.5 bg-rose-600 text-white rounded-lg hover:bg-rose-700 shadow-sm"
+                          title="حذف"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center gap-1.5">
-                      <div className="w-9 h-9 bg-white/80 rounded-xl flex items-center justify-center text-[#b7336a] shadow-sm shadow-rose-900/5 group-hover:scale-110 duration-200">
-                        <Camera className="w-5 h-5" />
-                      </div>
-                      <span className="text-[10px] text-gray-500 font-semibold leading-tight px-1">
-                        {slotLabels[idx]}
-                      </span>
-                    </div>
+                    <label className="w-full h-24 rounded-xl border border-dashed border-slate-200 bg-slate-50 hover:bg-rose-50/40 cursor-pointer flex flex-col items-center justify-center p-2 transition-colors group">
+                      {compressingIndex === idx ? (
+                        <div className="flex flex-col items-center gap-1 text-rose-600 text-[10px] font-bold">
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span>جاري الضغط...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <ImageIcon className="w-6 h-6 text-slate-400 group-hover:text-rose-600 transition-colors mb-1" />
+                          <span className="text-[10px] font-bold text-slate-600 group-hover:text-rose-600">
+                            {idx === 0 ? 'رفع الصورة' : '+ إضافة لون'}
+                          </span>
+                        </>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={compressingIndex !== null}
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) handleUploadSlot(idx, f);
+                        }}
+                      />
+                    </label>
                   )}
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Step 2: Form fields */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <Type className="w-4 h-4 text-[#b7336a]" />
-              2. اسم المنتج التجاري:
-            </label>
+          {/* ═════════ STEP 2: PRODUCT TITLE ═════════ */}
+          <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                2
+              </span>
+              <label className="text-sm font-black text-slate-900">
+                اسم المنتج التجاري <span className="text-rose-500">*</span>
+              </label>
+            </div>
             <input
               type="text"
+              required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="مثلا: فستان صيفي تركي ناعم"
-              className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
+              placeholder="مثال: فستان مخملي مطرز فاخر أو طقم أواني جرانيت تركي"
+              className="w-full text-sm font-bold p-3.5 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none transition-all"
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <Tag className="w-4 h-4 text-[#b7336a]" />
-              3. قسم العرض بالمتجر:
-            </label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
-            >
-              {categories.map((cat) => (
-                <option key={cat.value} value={cat.value}>
-                  {cat.icon} {cat.value}
-                </option>
-              ))}
-            </select>
+          {/* ═════════ STEP 3 & STEP 4: CATEGORY & OFFER DURATION ═════════ */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* STEP 3: CATEGORY */}
+            <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  3
+                </span>
+                <label className="text-sm font-black text-slate-900">
+                  قسم العرض بالمتجر
+                </label>
+              </div>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full text-xs sm:text-sm font-bold p-3.5 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none cursor-pointer"
+              >
+                {formCategories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* STEP 4: DURATION */}
+            <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  4
+                </span>
+                <label className="text-sm font-black text-slate-900">
+                  مدة بقاء العرض في التطبيق
+                </label>
+              </div>
+              <select
+                value={durationOption}
+                onChange={(e) => setDurationOption(e.target.value)}
+                className="w-full text-xs sm:text-sm font-bold p-3.5 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none cursor-pointer"
+              >
+                <option value="1">يوم واحد (24 ساعة) ⏳</option>
+                <option value="2">يومين (48 ساعة)</option>
+                <option value="3">3 أيام (72 ساعة) ⭐ الأكثر طلباً</option>
+                <option value="4">4 أيام (96 ساعة)</option>
+                <option value="5">5 أيام (120 ساعة)</option>
+                <option value="6">6 أيام (144 ساعة)</option>
+                <option value="7">أسبوع كامل (168 ساعة)</option>
+                <option value="unlimited">عرض مستمر (بدون انتهاء / دائم) ♾️</option>
+              </select>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-[#b7336a]" />
-              4. مدة بقاء العرض في التطبيق:
-            </label>
-            <select
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
-            >
-              {DURATIONS.map((dur) => (
-                <option key={dur.value} value={dur.value}>
-                  {dur.label}
-                </option>
-              ))}
-            </select>
+          {/* ═════════ STEP 5 & STEP 6: MCODE & COST PRICING WITH MARGIN ═════════ */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* STEP 5: MCODE */}
+            <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  5
+                </span>
+                <label className="text-sm font-black text-slate-900">
+                  كود التاجر الخاص بك (mCode)
+                </label>
+              </div>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={mCode}
+                  onChange={(e) => setMCode(e.target.value)}
+                  placeholder="مثال: 1 أو M-101"
+                  className="w-full text-sm font-black p-3.5 pr-10 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none text-emerald-800"
+                />
+                <Hash className="w-4 h-4 text-emerald-600 absolute right-3.5 top-1/2 -translate-y-1/2" />
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium">
+                يربط هذا العرض تلقائياً بحسابك كمندوب معتمد.
+              </p>
+            </div>
+
+            {/* STEP 6: COST PRICE */}
+            <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                  6
+                </span>
+                <label className="text-sm font-black text-slate-900">
+                  سعر شراء المنتج (التكلفة) ريال يمني <span className="text-rose-500">*</span>
+                </label>
+              </div>
+
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  value={costPrice}
+                  onChange={(e) => setCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="أدخل سعر التكلفة بالريال اليمني"
+                  className="w-full text-base font-black p-3.5 pr-10 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none"
+                />
+                <DollarSign className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+              </div>
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <Tag className="w-4 h-4 text-[#b7336a]" />
-              5. كود التاجر الخاص بك (mCode):
-            </label>
-            <input
-              type="text"
-              value={mCode}
-              onChange={(e) => setMCode(e.target.value)}
-              placeholder="مثلا: AT-490"
-              disabled={!!currentMerchant}
-              readOnly={!!currentMerchant}
-              className={`w-full px-4 py-3 border rounded-xl focus:outline-none transition-all font-semibold ${
-                currentMerchant
-                  ? 'bg-gray-100 border-gray-200 text-gray-500 cursor-not-allowed font-mono'
-                  : 'bg-gray-50/50 border-gray-200 focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a]'
-              }`}
-            />
-            {currentMerchant && (
-              <span className="text-[10px] text-emerald-600 block font-black mt-1">
-                ✔ تم تحديد الرمز تلقائياً لحسابك النشط ({currentMerchant.name})
+          {/* ═════════ STEP 7: DESCRIPTION & SPECIFICATIONS ═════════ */}
+          <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                7
               </span>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-[#b7336a]" />
-              6. سعر شراء المنتج (التكلفة) ريال:
-            </label>
-            <input
-              type="number"
-              value={costPrice}
-              onChange={(e) => setCostPrice(e.target.value)}
-              placeholder="مثلا: 10000"
-              className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-sans font-bold"
+              <label className="text-sm font-black text-slate-900">
+                وصف مميزات ومواصفات المنتج
+              </label>
+            </div>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="اكتب مواصفات الخامة، المميزات، الضمان، وطريقة الاستخدام بالتفصيل لتشجيع الزبون على الطلب..."
+              className="w-full text-xs sm:text-sm font-medium p-3.5 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none resize-y"
             />
           </div>
 
-          {/* Pricing Info Helper Box for Merchant */}
-          <div className="bg-rose-50/10 border border-dashed border-rose-100 p-4 rounded-xl flex flex-col justify-center text-sm">
-            <span className="text-rose-900 font-bold mb-1">💡 تنبيه إرشادي هام للتاجر:</span>
-            <span className="text-xs text-gray-500 font-medium leading-relaxed">
-              يرجى إدخال سعر التكلفة الأصلي للسلعة بدقة. سيقوم نظام عتق أونلاين بجدولة العرض وعرضه بالتسعيرة النهائية المتوافقة تلقائياً دون الحاجة لأي حسابات إضافية من طرفك.
-            </span>
+          {/* ═════════ STEP 8: SIZES, COLORS & QUANTITY ═════════ */}
+          <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
+                8
+              </span>
+              <label className="text-sm font-black text-slate-900">
+                المقاسات والألوان المتوفرة في المخزن
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  المقاسات المتاحة:
+                </label>
+                <input
+                  type="text"
+                  value={sizes}
+                  onChange={(e) => setSizes(e.target.value)}
+                  placeholder="مثال: XL, L, M, S أو قياس موحد"
+                  className="w-full text-xs font-bold p-3 rounded-xl border border-slate-300 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  الألوان المتوفرة:
+                </label>
+                <input
+                  type="text"
+                  value={colors}
+                  onChange={(e) => setColors(e.target.value)}
+                  placeholder="مثال: أسود، بيج، زيتي، كحلي"
+                  className="w-full text-xs font-bold p-3 rounded-xl border border-slate-300 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  الكمية بالمخزن:
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={quantity}
+                  onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
+                  className="w-full text-xs font-bold p-3 rounded-xl border border-slate-300 bg-white text-center"
+                />
+              </div>
+            </div>
           </div>
-        </div>
 
-        <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-[#b7336a]" />
-            7. وصف مميزات و مواصفات المنتج:
-          </label>
-          <textarea
-            value={desc}
-            onChange={(e) => setDesc(e.target.value)}
-            rows={2}
-            placeholder="مثلا: طقم تركي أصلي فاخر مقاوم للحرارة وسهل الغسل"
-            className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-            <Palette className="w-4 h-4 text-[#b7336a]" />
-            8. المقاسات والألوان المتوفرة في المخزن:
-          </label>
-          <input
-            type="text"
-            value={sizes}
-            onChange={(e) => setSizes(e.target.value)}
-            placeholder="مثلا: متوفر بمقاسات M, L, XL ألوان أحمر، أسود، وخوخي"
-            className="w-full px-4 py-3 bg-gray-50/50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#b7336a]/15 focus:border-[#b7336a] transition-all font-semibold"
-          />
-        </div>
-
-        {errorText && (
-          <motion.div
-            initial={{ opacity: 0, x: -10 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm font-bold flex items-center gap-2"
-          >
-            <span>🚨 {errorText}</span>
-          </motion.div>
-        )}
-
-        {statusText && (
-          <div className="text-[#b7336a] text-center text-sm font-bold animate-pulse">
-            {statusText}
-          </div>
-        )}
-
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex-1 bg-[#b7336a] text-white py-4 px-6 rounded-2xl font-bold text-lg shadow-md hover:bg-[#a02c5c] focus:outline-none focus:ring-4 focus:ring-rose-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-rose-900/10 active:scale-[0.99] flex items-center justify-center gap-2"
-          >
-            {editingProduct ? 'حفظ وحفظ التعديلات السريعة 💾' : 'نشر وتثبيت العرض الآن في المتجر ✅'}
-          </button>
-
-          {editingProduct && (
+          {/* Submit Button */}
+          <div className="pt-2">
             <button
-              type="button"
-              onClick={onCancelEdit}
-              className="px-6 py-4 bg-gray-100 text-gray-600 rounded-2xl font-bold hover:bg-gray-200 transition-all focus:outline-none active:scale-[0.99]"
+              id="product-publish-submit-btn"
+              type="submit"
+              disabled={isPublishing}
+              className="w-full bg-linear-to-r from-rose-600 via-rose-700 to-rose-800 hover:from-rose-700 hover:to-rose-900 text-white font-black py-4 rounded-2xl shadow-xl shadow-rose-600/30 text-sm sm:text-base flex items-center justify-center gap-2.5 transition-all active:scale-[0.99] cursor-pointer disabled:opacity-50"
             >
-              إلغاء التعديل
+              <Rocket className="w-5 h-5" />
+              <span>نشر وتثبيت العرض الآن في المتجر ✅</span>
             </button>
-          )}
-        </div>
-      </form>
+          </div>
+        </form>
 
-      {/* Full screen submitting modal overlay */}
-      <AnimatePresence>
-        {isSubmitting && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-rose-950/45 backdrop-blur-md flex flex-col items-center justify-center z-[999] p-4 text-center"
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 15 }}
-              className="bg-white max-w-sm w-full p-8 rounded-3xl shadow-2xl border border-rose-100 flex flex-col items-center gap-4"
-            >
-              <div className="relative flex items-center justify-center">
-                <div className="w-16 h-16 border-4 border-rose-100 border-t-[#b7336a] rounded-full animate-spin" />
-                <Camera className="w-6 h-6 text-[#b7336a] absolute animate-pulse" />
-              </div>
-              <div className="space-y-1.5">
-                <h4 className="text-lg font-black text-gray-900 font-sans">
-                  {editingProduct ? 'جاري حفظ التعديلات... ⚙️' : 'جاري نشر العرض الجديد... 🚀'}
-                </h4>
-                <p className="text-xs text-gray-400 font-semibold leading-relaxed">
-                  يرجى الانتظار ولا تغلق الصفحة. جاري معالجة العرض، وضغط الصور المرفقة سحابياً، وتثبيتها بشكل آمن في المتجر... ✨
-                </p>
-              </div>
-            </motion.div>
-          </motion.div>
+        {/* ═════════ PUBLISHING PROGRESS OVERLAY ═════════ */}
+        {isPublishing && (
+          <div className="absolute inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center p-6 text-white text-center animate-fadeIn">
+            <div className="w-16 h-16 rounded-3xl bg-rose-600/30 border border-rose-500/50 flex items-center justify-center mb-4 animate-bounce">
+              <Rocket className="w-8 h-8 text-rose-400" />
+            </div>
+
+            <h3 className="text-lg font-black tracking-wide mb-1">
+              جاري نشر العرض الجديد... 🚀
+            </h3>
+            <p className="text-xs text-slate-300 font-medium mb-6">
+              {publishStepText}
+            </p>
+
+            <div className="w-full max-w-xs bg-slate-800 rounded-full h-3 overflow-hidden border border-slate-700 p-0.5 mb-2">
+              <div 
+                className="bg-linear-to-r from-rose-500 to-emerald-400 h-full rounded-full transition-all duration-300"
+                style={{ width: `${publishProgress}%` }}
+              />
+            </div>
+            <span className="text-[11px] font-bold text-slate-400">{publishProgress}%</span>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
     </div>
   );
-}
+};

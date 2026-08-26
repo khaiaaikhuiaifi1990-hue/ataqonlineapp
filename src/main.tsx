@@ -3,13 +3,16 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-// Global error handler for uncaught runtime errors in browser
+// Safe error logging preventing cyclic structure errors
 window.addEventListener('error', (event) => {
-  console.error('Global application error caught:', event.error);
+  const msg = typeof event?.message === 'string' ? event.message : 'Error occurred';
+  console.warn('Runtime error notice:', msg);
 });
 
 window.addEventListener('unhandledrejection', (event) => {
-  console.error('Global unhandled promise rejection caught:', event.reason);
+  const reason = event?.reason;
+  const msg = typeof reason === 'string' ? reason : (reason && typeof reason.message === 'string' ? reason.message : 'Promise rejection');
+  console.warn('Unhandled rejection notice:', msg);
 });
 
 createRoot(document.getElementById('root')!).render(
@@ -17,5 +20,3 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
-
-

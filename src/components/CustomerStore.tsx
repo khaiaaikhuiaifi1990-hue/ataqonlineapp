@@ -1,593 +1,507 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { Search, ShoppingBag, Clock, Tag, MessageCircle, Share2, X, ChevronLeft, ChevronRight, Sparkles, Lock, ArrowLeft, ArrowUpRight, Copy, Check, Maximize2 } from 'lucide-react';
-import { Product, Agent, Category } from '../types';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { 
+  Search, 
+  Sparkles, 
+  Flame, 
+  SlidersHorizontal, 
+  Store, 
+  ShoppingBag, 
+  Check, 
+  MapPin, 
+  RefreshCw,
+  Phone,
+  Crown,
+  ShieldCheck,
+  Lock,
+  Star,
+  MessageCircle,
+  Tag,
+  Filter
+} from 'lucide-react';
+import { Product, StoreCategory, CartItem, PlatformSettings, Merchant } from '../types';
+import { ProductCard } from './ProductCard';
+import { OfferDetailsModal } from './OfferDetailsModal';
+import { CartModal } from './CartModal';
+import { ProductSkeletonGrid } from './ProductSkeletonGrid';
+import { getNextSupportPhone } from '../utils/supportRouter';
 
 interface CustomerStoreProps {
   products: Product[];
-  agents?: Agent[];
-  customerServicePhones?: string[];
-  onNavigateToAdmin: () => void;
-  isLoading: boolean;
-  categories?: Category[];
+  merchants: Merchant[];
+  settings: PlatformSettings;
+  cartItems: CartItem[];
+  isInitialLoading?: boolean;
+  onAddToCart: (product: Product) => void;
+  onUpdateCartQuantity: (productId: string, quantity: number) => void;
+  onRemoveFromCart: (productId: string) => void;
+  onClearCart: () => void;
+  onOpenMerchantLogin: () => void;
+  onOpenOwnerLogin: () => void;
+  onOpenAdminPortal: (tab?: 'merchant' | 'owner') => void;
 }
 
-const CATEGORIES_ICONS: Record<string, string> = {
-  'ملابس نسائية': '👗',
-  'عالم الأطفال (بناتي ولادي)': '👶',
-  'تجميل وإكسسوارات': '💄',
-  'المطبخ الحديثة': '🍳',
-  'مفروشات': '🛏️',
-  'عالم الرجل بلمسة نسائية': '👔',
-  'عروض خاصة': '🔥',
-};
+const DEFAULT_CATEGORIES: string[] = [
+  'الكل',
+  'عروض خاصة',
+  'ملابس نسائية',
+  'عالم الأطفال',
+  'تجميل وإكسسوارات',
+  'المطبخ الحديثة',
+  'مفروشات',
+  'أحذية',
+  'إكسسوارات الجوالات',
+  'إلكترونيات وجوالات',
+  'سوبرماركت ومواد غذائية',
+  'عطور وبخور'
+];
 
-export default function CustomerStore({ products, agents = [], customerServicePhones = ['967733221100'], onNavigateToAdmin, isLoading, categories }: CustomerStoreProps) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+const ATAQ_LOCATIONS = [
+  'كل المواقع في عتق',
+  'شارع درهم',
+  'الشارع العام',
+  'سوق الذهب',
+  'مركز المدينة بلازا',
+  'سوق الخضار والتمور',
+  'جولة الشهداء',
+  'مجمع النور'
+];
+
+export const CustomerStore: React.FC<CustomerStoreProps> = ({
+  products,
+  merchants,
+  settings,
+  cartItems,
+  isInitialLoading = false,
+  onAddToCart,
+  onUpdateCartQuantity,
+  onRemoveFromCart,
+  onClearCart,
+  onOpenMerchantLogin,
+  onOpenOwnerLogin,
+  onOpenAdminPortal
+}) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('الكل');
+  const [selectedLocation, setSelectedLocation] = useState<string>('كل المواقع في عتق');
+  const [activeTab, setActiveTab] = useState<'all' | 'offers_only' | 'top_discounts' | 'featured'>('all');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [fullscreenImageUrl, setFullscreenImageUrl] = useState<string | null>(null);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [isSyncingHeader, setIsSyncingHeader] = useState(false);
+  const [syncHeaderDone, setSyncHeaderDone] = useState(false);
 
-  const dynamicCategoriesIcons: Record<string, string> = {};
-  if (categories) {
-    categories.forEach(c => {
-      dynamicCategoriesIcons[c.value] = c.icon;
-    });
-  } else {
-    Object.assign(dynamicCategoriesIcons, CATEGORIES_ICONS);
-  }
+  // Hash-based navigation for Product Details Modal (#product) & Cart Modal (#cart)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const currentHash = window.location.hash;
 
-  // Filter only active and non-expired products
-  const activeProducts = products.filter((p) => {
-    const isNotHidden = p.status !== 'hidden';
-    const isNotExpired = !p.expiry || p.expiry > 9000000000000 || Date.now() < p.expiry;
-    return isNotHidden && isNotExpired;
-  });
-
-  const uniqueCategories = Array.from(new Set(activeProducts.map((p) => p.category).filter(Boolean)));
-
-  const filteredProducts = activeProducts.filter((p) => {
-    const matchesSearch =
-      p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.mCode?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.about?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      false;
-
-    const matchesCategory = selectedCategory ? p.category === selectedCategory : true;
-    return matchesSearch && matchesCategory;
-  });
-
-  const calculateRemaining = (expiry: number, isLong = false) => {
-    if (!expiry || expiry > 9000000000000) {
-      return isLong ? 'مدة العرض حتى انتهاء مدة هذا العرض في المتجر: عرض مستمر' : '⏳ عرض مستمر';
-    }
-    const diff = expiry - Date.now();
-    if (diff <= 0) return 'منتهي';
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    if (hours > 24) {
-      const days = Math.floor(hours / 24);
-      const remainingHours = hours % 24;
-      
-      let daysText = `${days} يوم`;
-      if (days === 1) daysText = 'يوم واحد';
-      else if (days === 2) daysText = 'يومين';
-      
-      const hoursText = remainingHours > 0 ? ` و ${remainingHours} ساعة` : '';
-      if (isLong) {
-        return `مدة العرض حتى انتهاء مدة هذا العرض في المتجر: ${daysText}${hoursText}`;
+      // If user backed out of #product / #view-image to empty hash, close details modal
+      if (currentHash !== '#product' && currentHash !== '#view-image') {
+        setSelectedProduct(null);
       }
-      return `⏳ متبقي ${daysText}${hoursText}`;
-    }
-    if (isLong) {
-      return `مدة العرض حتى انتهاء مدة هذا العرض في المتجر: ${hours} ساعة فقط`;
-    }
-    return `⏳ متبقي ${hours} ساعة فقط`;
+
+      // If user backed out of #cart, close cart modal
+      if (currentHash !== '#cart') {
+        setIsCartOpen(false);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, []);
+
+  const handleSelectProduct = (product: Product) => {
+    setSelectedProduct(product);
+    window.location.hash = 'product';
   };
 
-  const getProductAbout = (about?: string) => {
-    if (!about || about.trim() === '' || about.trim() === 'تلقائي') {
-      return 'منتج عالي الجودة من متجر عتّق أونلاين';
+  const handleCloseProductModal = () => {
+    setSelectedProduct(null);
+    if (window.location.hash === '#product' || window.location.hash === '#view-image') {
+      window.history.back();
     }
-    return about;
   };
 
-  const getProductSizes = (sizes?: string) => {
-    if (!sizes || sizes.trim() === '' || sizes.trim() === 'تلقائي') {
-      return 'متوفر جميع المقاسات';
+  const handleOpenCart = () => {
+    setIsCartOpen(true);
+    window.location.hash = 'cart';
+  };
+
+  const handleCloseCart = () => {
+    setIsCartOpen(false);
+    if (window.location.hash === '#cart') {
+      window.history.back();
     }
-    return sizes;
   };
 
-  const handleCopyLink = (product: Product) => {
-    const textToCopy = `🛒 منتج: ${product.name}\n🔖 كود المنتج (mCode): ${product.mCode || 'غير متوفر'}\n💰 السعر: ${product.price?.toLocaleString()} ريال\n📍 قسم: ${product.category}\n🌐 اطلب الآن عبر عتق أونلاين!`;
-    navigator.clipboard.writeText(textToCopy);
-    setCopiedId(product.id);
-    setTimeout(() => setCopiedId(null), 2000);
+  const handleHeaderCloudSync = () => {
+    setIsSyncingHeader(true);
+    setTimeout(() => {
+      setIsSyncingHeader(false);
+      setSyncHeaderDone(true);
+      setTimeout(() => setSyncHeaderDone(false), 2000);
+    }, 800);
   };
 
-  const handleWhatsAppOrder = (product: Product) => {
-    // Determine the WhatsApp phone number of the target Customer Service / Agent
-    let targetPhone = '967733221100'; // Default customer service number
-    let agentMatched = false;
-    
-    if (product.mCode && agents && agents.length > 0) {
-      const matchingAgent = agents.find(
-        (a) => a.status === 'active' && a.mCode.trim().toLowerCase() === product.mCode.trim().toLowerCase()
-      );
-      if (matchingAgent && matchingAgent.phone) {
-        // Format phone: remove any non-digit characters
-        let cleaned = matchingAgent.phone.replace(/[^0-9]/g, '');
-        // If it's 9 digits starting with 7, add Yemen country code
-        if (cleaned.length === 9 && cleaned.startsWith('7')) {
-          cleaned = '967' + cleaned;
+  // Dynamic store categories list
+  const activeCategories = useMemo(() => {
+    const raw = settings.categories && settings.categories.length > 0
+      ? settings.categories
+      : DEFAULT_CATEGORIES;
+    const cleanList = raw.filter((c) => c !== 'الكل' && c !== 'عروض حصرية');
+    return ['الكل', 'عروض حصرية', ...Array.from(new Set(cleanList))];
+  }, [settings.categories]);
+
+  // Fast Filter
+  const filteredProducts = useMemo(() => {
+    return products.filter((item) => {
+      // Exclude hidden products
+      if (item.status === 'hidden') return false;
+
+      // 1. Search Query Filter
+      if (searchQuery.trim()) {
+        const queryLower = searchQuery.toLowerCase().trim();
+        const matchesName = item.name.toLowerCase().includes(queryLower);
+        const matchesDesc = (item.description || '').toLowerCase().includes(queryLower);
+        const matchesMerchant = (item.merchantName || '').toLowerCase().includes(queryLower);
+        const matchesCategory = item.category.toLowerCase().includes(queryLower);
+        const matchesLocation = (item.merchantLocation || '').toLowerCase().includes(queryLower);
+        if (!matchesName && !matchesDesc && !matchesMerchant && !matchesCategory && !matchesLocation) {
+          return false;
         }
-        targetPhone = cleaned;
-        agentMatched = true;
       }
-    }
 
-    // If no agent matched the specific product code, use the Round Robin customer service pool
-    if (!agentMatched && customerServicePhones && customerServicePhones.length > 0) {
-      // Get last selected index of customer service from localStorage
-      const lastIdx = parseInt(localStorage.getItem('last_cs_index') || '-1');
-      const nextIdx = (lastIdx + 1) % customerServicePhones.length;
-      localStorage.setItem('last_cs_index', nextIdx.toString());
-      
-      let rawPhone = customerServicePhones[nextIdx] || '967733221100';
-      let cleaned = rawPhone.replace(/[^0-9]/g, '');
-      if (cleaned.length === 9 && cleaned.startsWith('7')) {
-        cleaned = '967' + cleaned;
+      // 2. Location Filter
+      if (selectedLocation !== 'كل المواقع في عتق') {
+        const loc = item.merchantLocation || '';
+        if (!loc.includes(selectedLocation)) return false;
       }
-      targetPhone = cleaned;
-    }
 
-    const templateMessage = `السلام عليكم عتق أونلاين\n\nأود الاستفسار وطلب منتج من المعرض:\n- *اسم المنتج:* ${product.name}\n- *كود المنتج (mCode):* ${product.mCode || 'عادي'}\n- *السعر المعلن للبيع:* ${product.price?.toLocaleString()} ريال\n- *القسم:* ${product.category}\n\nشكراً لكم وجاري مراجعة طلبي معكم وسداد القيمة`;
-    const encodedText = encodeURIComponent(templateMessage);
-    // Open Whatsapp link
-    window.open(`https://wa.me/${targetPhone}?text=${encodedText}`, '_blank');
+      // 3. Category Filter
+      if (selectedCategory === 'عروض حصرية') {
+        if (!item.isOffer) return false;
+      } else if (selectedCategory !== 'الكل') {
+        if (item.category !== selectedCategory) return false;
+      }
+
+      // 4. Tab Filter
+      if (activeTab === 'offers_only' && !item.isOffer) {
+        return false;
+      }
+      if (activeTab === 'top_discounts') {
+        if (!item.discountPrice || item.discountPrice >= item.originalPrice) return false;
+      }
+      if (activeTab === 'featured') {
+        if (!item.isFeatured && !item.isOffer) return false;
+      }
+
+      return true;
+    });
+  }, [products, searchQuery, selectedCategory, selectedLocation, activeTab]);
+
+  const handleQuickWhatsApp = useCallback((product: Product, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const cleanPhone = (product.merchantPhone || getNextSupportPhone(settings)).replace(/[^0-9]/g, '');
+    const currentPrice = product.discountPrice || product.originalPrice;
+    const message = encodeURIComponent(
+      `السلام عليكم ورحمة الله، أود الاستفسار من تطبيق عتق أونلاين:\n\n` +
+      `🏷️ المنتج: ${product.name}\n` +
+      `💰 السعر: ${currentPrice} ${settings.currency}\n` +
+      `📍 المتجر: ${product.merchantName}\n\n` +
+      `هل المنتج متوفر حالياً لإتمام الطلب والتوصيل؟`
+    );
+    window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
+  }, [settings]);
+
+  const handleAddProductToCart = (product: Product) => {
+    onAddToCart(product);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 2200);
   };
+
+  const totalOffersCount = useMemo(() => {
+    return products.filter((p) => p.isOffer).length;
+  }, [products]);
+
+  const totalCartCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);
 
   return (
-    <div className="space-y-8" dir="rtl">
-      {/* Dynamic Header Banner */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-[#b7336a]/10 via-[#b7336a]/5 to-rose-50/50 rounded-3xl border border-rose-100/30 p-6 sm:p-10 text-right">
-        {/* Abstract background decorative patterns */}
-        <div className="absolute top-0 left-0 w-32 h-32 bg-[#b7336a]/5 rounded-full filter blur-xl -translate-x-10 -translate-y-10" />
-        <div className="absolute bottom-0 right-0 w-48 h-48 bg-rose-200/20 rounded-full filter blur-2xl translate-x-20 translate-y-20" />
-
-        <div className="relative max-w-2xl space-y-4">
-          <div className="inline-flex items-center gap-2 bg-[#b7336a]/10 text-[#b7336a] px-3.5 py-1.5 rounded-full text-xs font-bold shadow-sm">
-            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-            <span>معرض العروض الحية اليومية</span>
-          </div>
-          
-          <h2 className="text-2xl sm:text-4xl font-extrabold text-gray-900 leading-tight">
-            استمتع بالتسوق من <span className="bg-gradient-to-l from-[#b7336a] to-rose-700 bg-clip-text text-transparent">عتق أونلاين</span> 🛍️
-          </h2>
-          
-          <p className="text-gray-600 text-sm sm:text-base leading-relaxed font-medium">
-            تصفح أرقى العروض والمنتجات المتوفرة والمُضافة حديثاً من قبل التجار. عروض عاجلة ومحسوبة بهوامش أرباح يسيرة لتسهيل تسوقكم في عتق ومديرياتها.
-          </p>
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-50 flex flex-col selection:bg-rose-500 selection:text-white pb-24">
+      {/* Toast Notification */}
+      {showToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-full shadow-xl text-xs sm:text-sm font-bold flex items-center gap-2 animate-bounce">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>تمت الإضافة إلى سلة الطلبات بنجاح!</span>
         </div>
-      </section>
+      )}
 
-      {/* Advanced Search and Filter Utilities */}
-      <section className="bg-white border border-gray-100 rounded-3xl p-5 shadow-xl shadow-rose-950/[0.01] space-y-5">
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-          {/* Custom Search field */}
-          <div className="relative w-full md:flex-1">
-            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-2 sm:gap-3">
+          {/* Left Action Buttons */}
+          <div className="flex items-center gap-2">
+            {/* 1. Portal Gateway Button - Icon Only without text */}
+            <button
+              type="button"
+              id="open-admin-portal-header-btn"
+              onClick={() => onOpenAdminPortal('merchant')}
+              className="w-10 h-10 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200/90 text-[#d45679] flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-95"
+              title="بوابة الإدارة"
+            >
+              <Lock className="w-5 h-5 stroke-[2.2]" />
+            </button>
+
+            {/* 2. Cart Button */}
+            <button
+              id="open-cart-header-btn"
+              onClick={handleOpenCart}
+              className="relative w-10 h-10 bg-slate-900 hover:bg-black text-white rounded-2xl shadow-xs transition-all cursor-pointer flex items-center justify-center active:scale-95"
+              title="سلة الطلبات"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              {totalCartCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white">
+                  {totalCartCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Right Logo & Branding matching screenshot */}
+          <div className="flex items-center gap-2.5 text-right">
+            <div>
+              <h1 className="text-base sm:text-xl font-black text-slate-900 leading-tight">
+                عتق أونلاين
+              </h1>
+              <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium hidden xs:block">
+                قناة عرض وتسويق الخدمات والسلع المحلية
+              </p>
+            </div>
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-linear-to-tr from-[#d45679] to-[#eb7a98] flex items-center justify-center text-white shadow-md shadow-rose-300/40 shrink-0">
+              <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+          </div>
+        </div>
+
+        {/* Search & Location Filter Bar */}
+        <div className="max-w-6xl mx-auto px-4 pb-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="relative sm:col-span-2">
             <input
+              id="store-search-input"
               type="text"
-              placeholder="ابحث عن منتجك المفضل، كود، أو تفاصيل العرض السريع..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pr-12 pl-4 py-3.5 bg-gray-50/70 hover:bg-gray-50 border border-gray-200 focus:border-[#b7336a] rounded-2xl text-sm font-semibold focus:outline-none focus:ring-4 focus:ring-rose-50/50 transition-all"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="ابحث عن عرض، هاتف، عطر، متجر، أو موقع في عتق..."
+              className="w-full bg-slate-100/90 focus:bg-white text-slate-900 text-xs sm:text-sm font-medium py-2.5 pr-10 pl-10 rounded-xl border border-transparent focus:border-rose-300 focus:ring-2 focus:ring-rose-100 outline-none transition-all"
             />
-            {searchTerm && (
+            <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+            {searchQuery && (
               <button
-                onClick={() => setSearchTerm('')}
-                className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-xs text-slate-400 hover:text-slate-600 absolute left-3.5 top-1/2 -translate-y-1/2 p-1"
               >
                 مسح
               </button>
             )}
           </div>
 
-          {/* Quick Stats of Active listings */}
-          <div className="hidden lg:flex items-center gap-2 px-4 py-3 bg-rose-50/50 border border-rose-100/30 rounded-2xl text-xs text-[#b7336a] font-bold shrink-0">
-            <ShoppingBag className="w-4 h-4" />
-            <span>متوفر حالياً: {activeProducts.length} عرض نشط بالمعرض</span>
-          </div>
-        </div>
-
-        {/* Scrollable Horizontal Category Selector */}
-        <div className="space-y-2">
-          <span className="text-xs font-bold text-gray-400 block pr-1">تصفح الأقسام والتبويبات المتوفرة:</span>
-          <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none scroll-smooth">
-            <button
-              onClick={() => setSelectedCategory('')}
-              className={`px-5 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition-all shrink-0 border ${
-                selectedCategory === ''
-                  ? 'bg-[#b7336a] border-[#b7336a] text-white shadow-md shadow-rose-900/10'
-                  : 'bg-gray-50 border-gray-200/70 text-gray-600 hover:bg-gray-100'
-              }`}
+          <div>
+            <select
+              value={selectedLocation}
+              onChange={(e) => setSelectedLocation(e.target.value)}
+              className="w-full bg-slate-100 text-slate-700 text-xs font-bold py-2.5 px-3 rounded-xl border border-transparent focus:bg-white focus:border-rose-300 outline-none"
             >
-              🎯 الكل ({activeProducts.length})
-            </button>
+              {ATAQ_LOCATIONS.map((loc) => (
+                <option key={loc} value={loc}>
+                  📍 {loc}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-            {uniqueCategories.map((cat) => {
-              const count = activeProducts.filter((p) => p.category === cat).length;
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-5 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition-all shrink-0 border flex items-center gap-1.5 ${
-                    selectedCategory === cat
-                      ? 'bg-[#b7336a] border-[#b7336a] text-white shadow-md shadow-rose-900/10'
-                      : 'bg-gray-50 border-gray-200/70 text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  <span className="text-sm">{dynamicCategoriesIcons[cat] || '📦'}</span>
-                  <span>{cat}</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-extrabold ${
-                    selectedCategory === cat ? 'bg-white/20 text-white' : 'bg-gray-200/70 text-gray-500'
-                  }`}>
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* Load progress or Empty catalogues feedback */}
-      {isLoading ? (
-        <div className="py-24 text-center space-y-4">
-          <div className="w-10 h-10 border-4 border-[#b7336a] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-gray-500 text-sm font-bold">جاري تحميل المعرض ومزامنة العروض من السيرفر...</p>
-        </div>
-      ) : filteredProducts.length === 0 ? (
-        <div className="bg-white border border-gray-100 rounded-3xl p-16 text-center shadow-sm max-w-md mx-auto space-y-4">
-          <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mx-auto text-gray-300 border border-gray-100">
-            <ShoppingBag className="w-8 h-8" />
-          </div>
-          <div className="space-y-1 bg-white">
-            <h4 className="font-bold text-gray-800 text-base">لا توجد عروض نشطة حالياً</h4>
-            <p className="text-gray-400 text-xs font-semibold leading-relaxed">
-              {activeProducts.length === 0
-                ? 'يرجى مراجعة المعرض لاحقاً، جاري إضافة عروض حديثة من قبل مناديب وتجار عتق أونلاين.'
-                : 'لا توجد منتجات تطابق شروط البحث أو الفلترة المحددة.'}
-            </p>
-          </div>
-          {selectedCategory || searchTerm ? (
-            <button
-              onClick={() => {
-                setSelectedCategory('');
-                setSearchTerm('');
-              }}
-              className="text-xs text-[#b7336a] font-bold hover:underline"
-            >
-              استعادة تهيئة البحث والكل ↩
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        /* The Storefront Bento grid */
-        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6">
-          {filteredProducts.map((p, i) => {
-            const hasImages = p.imgs && p.imgs.length > 0;
-            
+        {/* Horizontal Category Scroll Pills */}
+        <div className="max-w-6xl mx-auto px-4 pb-2.5 overflow-x-auto no-scrollbar flex items-center gap-1.5">
+          {activeCategories.map((cat) => {
+            const isSelected = selectedCategory === cat;
             return (
-              <motion.div
-                key={p.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: i * 0.05 }}
-                whileHover={{ y: -6 }}
-                onClick={() => {
-                  setSelectedProduct(p);
-                  setActiveImageIndex(0);
-                }}
-                className="bg-white border border-gray-100/80 rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all flex flex-col group relative cursor-pointer"
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setSelectedCategory(cat)}
+                className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 ${
+                  isSelected
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
               >
-                {/* Card Top Gallery - Primary image only */}
-                <div className="relative h-44 sm:h-64 bg-gray-50 flex items-center justify-center overflow-hidden">
-                  {hasImages ? (
-                    <img
-                      src={p.imgs[0]}
-                      alt={p.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <ShoppingBag className="w-12 h-12 text-gray-300" />
-                  )}
-                  {/* Subtle fade overlay at the bottom */}
-                  <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-black/5 to-transparent pointer-events-none" />
-                </div>
-
-                {/* Card Content - Super simplified with Name, Price and WhatsApp Button */}
-                <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between space-y-3">
-                  <div className="text-right space-y-1">
-                    <h3
-                      className="font-extrabold text-gray-800 text-sm sm:text-base line-clamp-1 group-hover:text-[#b7336a] transition-colors"
-                      title={p.name}
-                    >
-                      {p.name}
-                    </h3>
-                    
-                    <div className="flex items-baseline gap-0.5 sm:gap-1 text-[#b7336a]">
-                      <span className="text-base sm:text-lg font-black font-sans leading-none">
-                        {p.price?.toLocaleString('en-US')}
-                      </span>
-                      <span className="text-[10px] sm:text-xs font-bold">ريال</span>
-                    </div>
-                  </div>
-
-                  {/* Wide WhatsApp Button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation(); // Prevent opening the modal when clicking the button
-                      handleWhatsAppOrder(p);
-                    }}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 shadow-sm hover:shadow-md"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5 shrink-0" />
-                    <span>طلب بالواتساب</span>
-                  </button>
-                </div>
-              </motion.div>
+                {cat === 'عروض حصرية' && <Sparkles className="w-3 h-3 inline ml-1" />}
+                {cat}
+              </button>
             );
           })}
         </div>
-      )}
+      </header>
 
-      {/* High-Fidelity Product Full Details Dialog Overlay */}
-      <AnimatePresence>
-        {selectedProduct && (
-          <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4">
-            {/* Backdrop cover blur */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedProduct(null)}
-              className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm"
-            />
+      {/* Main Content Area */}
+      <main className="max-w-6xl mx-auto px-4 py-4 w-full flex-1">
+        {/* Banner Section */}
+        <div className="bg-gradient-to-r from-rose-700 via-pink-700 to-rose-800 text-white rounded-2xl p-4 sm:p-5 mb-5 shadow-md relative overflow-hidden">
+          <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-white text-xs font-bold mb-1.5 backdrop-blur-xs">
+                <Sparkles className="w-3 h-3 text-amber-300" />
+                <span>عروض حية ومحدثة من أسواق شبوة</span>
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black leading-tight">
+                {settings.bannerTitle}
+              </h2>
+              <p className="text-xs sm:text-sm text-rose-100 mt-1 max-w-xl">
+                {settings.bannerSubtitle}
+              </p>
+            </div>
 
-            {/* Modal Body Container */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative bg-white w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl border border-gray-100 z-10 flex flex-col md:flex-row max-h-[85vh] md:max-h-none overflow-y-auto md:overflow-visible"
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md px-3.5 py-2 rounded-xl self-start sm:self-auto border border-white/10">
+              <Flame className="w-5 h-5 text-amber-300" />
+              <div>
+                <div className="text-xs text-rose-100">العروض النشطة</div>
+                <div className="text-sm sm:text-base font-black">{totalOffersCount} عرض متاح</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Tab Filters */}
+        <div className="flex items-center justify-between mb-4 border-b border-slate-200 pb-2">
+          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setActiveTab('all')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
+                activeTab === 'all'
+                  ? 'bg-slate-900 text-white'
+                  : 'text-slate-600 hover:bg-slate-200/60'
+              }`}
             >
-              {/* Close Button top edge corner */}
-              <button
-                onClick={() => setSelectedProduct(null)}
-                className="absolute top-4 left-4 bg-white/90 backdrop-blur-md text-gray-500 hover:text-gray-800 p-2 rounded-full shadow-lg hover:scale-110 active:scale-95 transition-all z-20 border border-gray-100"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              جميع المنتجات ({products.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('offers_only')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1 ${
+                activeTab === 'offers_only'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-200/60'
+              }`}
+            >
+              <Sparkles className="w-3 h-3" />
+              <span>العروض فقط ({totalOffersCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('top_discounts')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1 ${
+                activeTab === 'top_discounts'
+                  ? 'bg-rose-600 text-white'
+                  : 'text-slate-600 hover:bg-slate-200/60'
+              }`}
+            >
+              <Flame className="w-3 h-3" />
+              <span>أكبر التخفيضات</span>
+            </button>
+          </div>
 
-              {/* Column Right: Interactive Gallery display */}
-              <div className="w-full md:w-1/2 bg-gray-50 flex flex-col justify-between p-4 relative border-l border-gray-100 shrink-0 select-none">
-                <div 
-                  onClick={() => {
-                    if (selectedProduct.imgs && selectedProduct.imgs[activeImageIndex]) {
-                      setFullscreenImageUrl(selectedProduct.imgs[activeImageIndex]);
-                    }
-                  }}
-                  className="flex-1 h-64 md:h-96 flex items-center justify-center relative overflow-hidden rounded-2xl bg-white border border-gray-50 shadow-inner cursor-zoom-in group/mainimg"
-                >
-                  {selectedProduct.imgs && selectedProduct.imgs[activeImageIndex] ? (
-                    <>
-                      <img
-                        src={selectedProduct.imgs[activeImageIndex]}
-                        alt={selectedProduct.name}
-                        className="w-full h-full object-contain transition-transform duration-300 group-hover/mainimg:scale-[1.02]"
-                        referrerPolicy="no-referrer"
-                      />
-                      {/* Interactive hover overlay */}
-                      <div className="absolute inset-0 bg-black/0 group-hover/mainimg:bg-black/[0.03] transition-all flex items-center justify-center">
-                        <span className="bg-black/60 backdrop-blur-md text-white px-3.5 py-2 rounded-2xl text-xs font-black opacity-0 group-hover/mainimg:opacity-100 transition-opacity flex items-center gap-1.5 shadow-lg transform translate-y-2 group-hover/mainimg:translate-y-0 duration-300">
-                          <Maximize2 className="w-3.5 h-3.5" />
-                          <span>عرض ملء الشاشة 🔍</span>
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <ShoppingBag className="w-16 h-16 text-gray-300" />
-                  )}
+          <span className="text-xs text-slate-400 font-medium hidden sm:inline">
+            عرض {filteredProducts.length} من {products.length}
+          </span>
+        </div>
 
-                  {/* Image Navigation Carousel Arrows */}
-                  {selectedProduct.imgs && selectedProduct.imgs.length > 1 && (
-                    <div className="absolute inset-x-3 top-1/2 -translate-y-1/2 flex items-center justify-between">
-                      <button
-                        onClick={() =>
-                          setActiveImageIndex((prev) =>
-                            prev === 0 ? selectedProduct.imgs.length - 1 : prev - 1
-                          )
-                        }
-                        className="bg-white/80 hover:bg-white text-gray-700 hover:text-gray-900 shadow-md p-1.5 rounded-full hover:scale-105 active:scale-95 transition-all"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-
-                      <button
-                        onClick={() =>
-                          setActiveImageIndex((prev) =>
-                            prev === selectedProduct.imgs.length - 1 ? 0 : prev + 1
-                          )
-                        }
-                        className="bg-white/80 hover:bg-white text-gray-700 hover:text-gray-900 shadow-md p-1.5 rounded-full hover:scale-105 active:scale-95 transition-all"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Sub-gallery indicator dots/thumbnails */}
-                {selectedProduct.imgs && selectedProduct.imgs.length > 1 && (
-                  <div className="flex items-center justify-center gap-2 mt-3 overflow-x-auto py-1">
-                    {selectedProduct.imgs.map((img, thumbIdx) => (
-                      <button
-                        key={`thumbnail-${thumbIdx}`}
-                        onClick={() => setActiveImageIndex(thumbIdx)}
-                        className={`w-12 h-12 rounded-xl overflow-hidden border-2 transition-all shrink-0 bg-white shadow-inner ${
-                          thumbIdx === activeImageIndex
-                            ? 'border-[#b7336a] scale-105 shadow-md shadow-rose-900/5'
-                            : 'border-transparent opacity-60 hover:opacity-100 hover:scale-102'
-                        }`}
-                      >
-                        <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Column Left: Information params */}
-              <div className="p-6 md:p-8 flex-1 flex flex-col justify-between space-y-6 text-right">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-50 pb-3.5">
-                    {/* Category text heading */}
-                    <span className="bg-[#b7336a]/10 text-[#b7336a] px-3.5 py-1 rounded-full text-xs font-bold flex items-center gap-1.5">
-                      <span>{dynamicCategoriesIcons[selectedProduct.category] || '📦'}</span>
-                      <span>{selectedProduct.category}</span>
-                    </span>
-
-                    {selectedProduct.mCode && (
-                      <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1.5 rounded-xl font-bold font-mono">
-                        كود المنتج كالتالي: <strong className="text-gray-800">{selectedProduct.mCode}</strong>
-                      </span>
-                    )}
-                  </div>
-
-                  <h3 className="text-xl sm:text-2xl font-black text-gray-900 leading-snug">
-                    {selectedProduct.name}
-                  </h3>
-
-                  {/* Time frame box */}
-                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-[#b7336a] bg-rose-50/40 p-2.5 rounded-xl">
-                    <Clock className="w-4 h-4 text-[#b7336a] shrink-0" />
-                    <span>{calculateRemaining(selectedProduct.expiry, true)}</span>
-                  </div>
-
-                  {/* Customer selling Price tag */}
-                  <div className="bg-gray-50 p-4 rounded-2xl flex items-center justify-between">
-                    <span className="text-gray-500 font-bold text-sm">السعر النهائي للزبون:</span>
-                    <div className="flex items-baseline gap-1 text-[#b7336a]">
-                      <span className="text-2xl sm:text-3xl font-black font-sans">
-                        {selectedProduct.price?.toLocaleString()}
-                      </span>
-                      <span className="text-sm font-bold">ريال يمني</span>
-                    </div>
-                  </div>
-
-                  {/* Description space */}
-                  <div className="space-y-1.5 pt-1.5">
-                    <span className="block text-xs font-bold text-gray-400">📖 وصف المنتج:</span>
-                    <p className="text-gray-600 text-sm leading-relaxed font-semibold">
-                      {getProductAbout(selectedProduct.about)}
-                    </p>
-                  </div>
-
-                  {/* Sizing description list */}
-                  <div className="space-y-1.5">
-                    <span className="block text-xs font-bold text-gray-400">📏 المقاسات:</span>
-                    <div className="p-3 bg-rose-50/10 border border-dashed border-rose-100 rounded-xl text-xs text-rose-900 font-bold">
-                      {getProductSizes(selectedProduct.sizes)}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Confirmations & WhatsApp order widgets */}
-                <div className="space-y-3 pt-5 border-t border-gray-50">
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => handleCopyLink(selectedProduct)}
-                      className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-3.5 px-4 rounded-2xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 active:scale-[0.98]"
-                    >
-                      {copiedId === selectedProduct.id ? (
-                        <>
-                          <Check className="w-4 h-4 text-emerald-600" />
-                          <span className="text-emerald-700">تم نسخ التفاصيل</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-4 h-4" />
-                          <span>نسخ تفاصيل المنتج</span>
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={() => handleWhatsAppOrder(selectedProduct)}
-                      className="bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-4 rounded-2xl text-xs sm:text-sm font-bold transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-[0.98]"
-                    >
-                      <MessageCircle className="w-5 h-5 shrink-0" />
-                      <span>تقديم طلب بالواتساب</span>
-                    </button>
-                  </div>
-
-                  <p className="text-center text-[10px] text-gray-400 font-medium">
-                    ⚠️ عند النقر على تقديم طلب، سيقوم هاتفك بنقلك للواتساب لإتمام الشراء والمعاينة مع المشرف
-                  </p>
-                </div>
-              </div>
-            </motion.div>
+        {/* Product Grid / Skeleton State */}
+        {isInitialLoading && products.length === 0 ? (
+          <ProductSkeletonGrid count={8} />
+        ) : filteredProducts.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 animate-fadeIn">
+            {filteredProducts.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                currency={settings.currency || 'ريال يمني'}
+                onSelect={setSelectedProduct}
+                onQuickWhatsApp={handleQuickWhatsApp}
+              />
+            ))}
+          </div>
+        ) : (
+          /* Empty Search State */
+          <div className="text-center py-16 px-4 bg-white rounded-2xl border border-slate-200">
+            <div className="w-14 h-14 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center mx-auto mb-3">
+              <Search className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-800 mb-1">لم يتم العثور على نتائج</h3>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto mb-4">
+              لم نجد عروض تطابق بحثك حالياً في عتق. جرب البحث بكلمات أخرى أو اختر قسماً آخر.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('');
+                setSelectedCategory('الكل');
+                setSelectedLocation('كل المواقع في عتق');
+                setActiveTab('all');
+              }}
+              className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>إعادة ضبط الفلاتر</span>
+            </button>
           </div>
         )}
-      </AnimatePresence>
+      </main>
 
-      {/* Fullscreen Image Lightbox Modal */}
-      <AnimatePresence>
-        {fullscreenImageUrl && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setFullscreenImageUrl(null)}
-            className="fixed inset-0 bg-black/95 backdrop-blur-md z-[200] flex flex-col items-center justify-center cursor-zoom-out p-4 md:p-8 select-none"
+      {/* Floating Bottom Cart Bar if items exist */}
+      {totalCartCount > 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-md bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center justify-between animate-fadeIn border border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-rose-600 flex items-center justify-center text-white">
+              <ShoppingBag className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold">سلة الطلبات ({totalCartCount} أصناف)</div>
+              <div className="text-[11px] text-slate-400">جاهزة للإرسال بالواتساب</div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-[0.98]"
           >
-            {/* Close button top right */}
-            <button
-              onClick={() => setFullscreenImageUrl(null)}
-              className="absolute top-6 left-6 bg-white/10 hover:bg-white/25 text-white p-3 rounded-full transition-all border border-white/10 shadow-xl z-[210] hover:scale-110 active:scale-95 cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            عرض السلة
+          </button>
+        </div>
+      )}
 
-            {/* Main fullscreen image container */}
-            <div className="relative max-w-5xl max-h-[85vh] w-full h-full flex items-center justify-center">
-              <motion.img
-                initial={{ scale: 0.95, y: 15 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.95, y: 15 }}
-                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-                src={fullscreenImageUrl}
-                alt="Product High Resolution"
-                className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl selection:bg-transparent cursor-default border border-white/5"
-                referrerPolicy="no-referrer"
-                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the image itself
-              />
-            </div>
+      {/* Product Details Modal */}
+      <OfferDetailsModal
+        product={selectedProduct}
+        currency={settings.currency || 'ريال يمني'}
+        onClose={handleCloseProductModal}
+        onAddToCart={handleAddProductToCart}
+      />
 
-            {/* Footer indicator */}
-            <div className="absolute bottom-6 inset-x-0 text-center pointer-events-none">
-              <span className="bg-black/40 backdrop-blur-md text-white/80 px-4 py-2 rounded-full text-[11px] font-black border border-white/5 shadow-md select-none">
-                انقر في أي مكان خارج الصورة أو على زر الإغلاق للعودة ✕
-              </span>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Cart Modal */}
+      {isCartOpen && (
+        <CartModal
+          items={cartItems}
+          settings={settings}
+          onUpdateQuantity={onUpdateCartQuantity}
+          onRemoveItem={onRemoveFromCart}
+          onClearCart={onClearCart}
+          onClose={handleCloseCart}
+        />
+      )}
     </div>
   );
-}
+};

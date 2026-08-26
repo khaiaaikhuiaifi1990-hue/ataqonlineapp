@@ -2,21 +2,25 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>عتق اونلاين - العروض والطلبات السريعة</title>
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#b7336a" />
-    <link rel="apple-touch-icon" href="/icon.jpg" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="عتق اونلاين - منصة العروض والمنتجات المتميزة" />
+    <title>عتق اونلاين | Ataq Online</title>
+
+    <!-- Google Fonts for Ultra Clean Arabic Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    
     <script>
-      // Intercept and mock Vite HMR WebSocket connection ONLY in dev environments to prevent reload loops
+      // Prevent Vite HMR issues only in sandboxed preview environments
       (function() {
         const isDevEnv = window.location.hostname.includes('ais-dev') || 
                          window.location.hostname === 'localhost' || 
                          window.location.hostname === '127.0.0.1';
         
-        if (!isDevEnv) return; // Do not mock WebSockets in production (Vercel, etc.)
+        if (!isDevEnv) return;
 
         const OriginalWebSocket = window.WebSocket;
         if (OriginalWebSocket) {
@@ -28,29 +32,22 @@
             ) && !url.includes('firebase');
 
             if (isViteHmr) {
-              console.log('🛡️ Intercepted dev Vite HMR WebSocket:', url);
-              
               const mockWS = {
                 url: url,
-                readyState: 1, // OPEN
+                readyState: 1,
                 bufferedAmount: 0,
-                extensions: '',
                 protocol: '',
                 binaryType: 'blob',
-                
                 send: function(data) {},
                 close: function() {},
-                
                 onopen: null,
                 onerror: null,
                 onclose: null,
                 onmessage: null,
-                
+                _listeners: {},
                 addEventListener: function(type, listener) {
-                  if (!this._listeners) this._listeners = {};
                   if (!this._listeners[type]) this._listeners[type] = [];
                   this._listeners[type].push(listener);
-                  
                   if (type === 'open') {
                     setTimeout(() => {
                       if (typeof this.onopen === 'function') this.onopen();
@@ -59,104 +56,25 @@
                   }
                 },
                 removeEventListener: function(type, listener) {
-                  if (this._listeners && this._listeners[type]) {
+                  if (this._listeners[type]) {
                     this._listeners[type] = this._listeners[type].filter(l => l !== listener);
                   }
                 },
                 dispatchEvent: function(event) { return true; }
               };
-              
               setTimeout(() => {
                 if (typeof mockWS.onopen === 'function') mockWS.onopen();
               }, 50);
-
               return mockWS;
             }
             return new OriginalWebSocket(url, protocols);
           };
-          Object.setPrototypeOf(window.WebSocket, OriginalWebSocket);
-          window.WebSocket.prototype = OriginalWebSocket.prototype;
         }
       })();
     </script>
-    <script>
-      // Automatic Version Check & Cache Purging (Solves aggressive PWA caching completely)
-      async function checkAppVersion() {
-        try {
-          const response = await fetch('/version.json?t=' + Date.now(), { cache: 'no-store' });
-          if (response.ok) {
-            const data = await response.json();
-            const serverVersion = data.version;
-            const currentVersion = parseInt(localStorage.getItem('ataq_app_version') || '0', 10);
-            
-            if (currentVersion !== 0 && serverVersion > currentVersion) {
-              console.log('🔄 New app version detected:', serverVersion, 'Local:', currentVersion);
-              
-              // 1. Unregister all service workers
-              if ('serviceWorker' in navigator) {
-                const registrations = await navigator.serviceWorker.getRegistrations();
-                for (const reg of registrations) {
-                  await reg.unregister();
-                }
-              }
-              
-              // 2. Clear all cache storages
-              if ('caches' in window) {
-                const keys = await caches.keys();
-                for (const key of keys) {
-                  await caches.delete(key);
-                }
-              }
-              
-              // 3. Save new version and do a hard reload
-              localStorage.setItem('ataq_app_version', serverVersion);
-              window.location.reload();
-            } else if (currentVersion === 0 || isNaN(currentVersion)) {
-              localStorage.setItem('ataq_app_version', serverVersion);
-            }
-          }
-        } catch (e) {
-          console.warn('⚠️ Version check skipped or failed:', e);
-        }
-      }
-
-      // Check on load
-      checkAppVersion();
-
-      // Check on tab focus or visibility change
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-          checkAppVersion();
-        }
-      });
-
-      // Check every 30 seconds
-      setInterval(checkAppVersion, 30000);
-
-      // Register Service Worker for PWA
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then(reg => {
-              console.log('🚀 Service Worker registered successfully:', reg.scope);
-              
-              // Handle active controller changes
-              let refreshing = false;
-              navigator.serviceWorker.addEventListener('controllerchange', () => {
-                if (!refreshing) {
-                  refreshing = true;
-                  window.location.reload();
-                }
-              });
-            })
-            .catch(err => console.error('❌ Service Worker registration failed:', err));
-        });
-      }
-    </script>
   </head>
-  <body>
+  <body class="bg-slate-50 text-slate-900 font-cairo antialiased selection:bg-rose-500 selection:text-white min-h-screen">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
