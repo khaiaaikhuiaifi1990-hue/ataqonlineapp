@@ -55,8 +55,8 @@ export const OfferDetailsModal: React.FC<OfferDetailsModalProps> = ({
   useEffect(() => {
     const handleHashChange = () => {
       const currentHash = window.location.hash;
-      // If hash transitioned back from #view-image to #product, close fullscreen image only
-      if (currentHash === '#product') {
+      // If hash is no longer #view-image, close fullscreen image only and keep details modal
+      if (currentHash !== '#view-image') {
         setIsFullscreenImageOpen(false);
         setZoomLevel(1);
       }

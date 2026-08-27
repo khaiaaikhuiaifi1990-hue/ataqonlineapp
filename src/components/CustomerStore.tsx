@@ -90,31 +90,104 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
   const [isSyncingHeader, setIsSyncingHeader] = useState(false);
   const [syncHeaderDone, setSyncHeaderDone] = useState(false);
 
-  // Hash-based navigation for Product Details Modal (#product) & Cart Modal (#cart)
+  // Comprehensive Hash-based Navigation System
   useEffect(() => {
-    const handleHashChange = () => {
-      const currentHash = window.location.hash;
+    const syncWithHash = () => {
+      const rawHash = window.location.hash;
+      const cleanHash = rawHash.startsWith('#') ? rawHash.slice(1) : rawHash;
 
-      // If user backed out of #product / #view-image to empty hash, close details modal
-      if (currentHash !== '#product' && currentHash !== '#view-image') {
-        setSelectedProduct(null);
+      if (cleanHash === 'view-image') {
+        // Fullscreen image zoom view (product modal remains open underneath)
+        return;
       }
 
-      // If user backed out of #cart, close cart modal
-      if (currentHash !== '#cart') {
+      if (cleanHash === 'product') {
+        // Product details modal is active
         setIsCartOpen(false);
+        return;
+      }
+
+      if (cleanHash === 'cart') {
+        // Cart modal is active
+        setIsCartOpen(true);
+        setSelectedProduct(null);
+        return;
+      }
+
+      // If not modal state, close modals and sync view
+      setSelectedProduct(null);
+      setIsCartOpen(false);
+
+      if (cleanHash === 'tab-offers') {
+        setActiveTab('offers_only');
+        setSelectedCategory('الكل');
+      } else if (cleanHash === 'tab-discounts') {
+        setActiveTab('top_discounts');
+        setSelectedCategory('الكل');
+      } else if (cleanHash.startsWith('category-')) {
+        const catName = decodeURIComponent(cleanHash.replace('category-', ''));
+        setSelectedCategory(catName);
+        setActiveTab('all');
+      } else {
+        // Default / Main Store (All / Home)
+        setSelectedCategory('الكل');
+        setActiveTab('all');
       }
     };
 
-    window.addEventListener('hashchange', handleHashChange);
+    // Synchronize state on initial load if hash is present
+    if (window.location.hash) {
+      syncWithHash();
+    }
+
+    window.addEventListener('hashchange', syncWithHash);
     return () => {
-      window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('hashchange', syncWithHash);
     };
   }, []);
 
+  const handleSelectTab = (tab: 'all' | 'offers_only' | 'top_discounts') => {
+    setActiveTab(tab);
+    if (tab === 'offers_only') {
+      if (window.location.hash !== '#tab-offers') {
+        window.location.hash = 'tab-offers';
+      }
+    } else if (tab === 'top_discounts') {
+      if (window.location.hash !== '#tab-discounts') {
+        window.location.hash = 'tab-discounts';
+      }
+    } else {
+      // tab === 'all'
+      if (window.location.hash.startsWith('#tab-')) {
+        window.history.back();
+      } else if (window.location.hash && !window.location.hash.startsWith('#category-')) {
+        window.location.hash = '';
+      }
+    }
+  };
+
+  const handleSelectCategory = (cat: string) => {
+    if (cat === 'الكل') {
+      setSelectedCategory('الكل');
+      if (window.location.hash.startsWith('#category-')) {
+        window.history.back();
+      } else if (window.location.hash && !window.location.hash.startsWith('#tab-')) {
+        window.location.hash = '';
+      }
+    } else {
+      setSelectedCategory(cat);
+      const targetHash = 'category-' + encodeURIComponent(cat);
+      if (window.location.hash !== '#' + targetHash) {
+        window.location.hash = targetHash;
+      }
+    }
+  };
+
   const handleSelectProduct = (product: Product) => {
     setSelectedProduct(product);
-    window.location.hash = 'product';
+    if (window.location.hash !== '#product') {
+      window.location.hash = 'product';
+    }
   };
 
   const handleCloseProductModal = () => {
@@ -126,7 +199,9 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
 
   const handleOpenCart = () => {
     setIsCartOpen(true);
-    window.location.hash = 'cart';
+    if (window.location.hash !== '#cart') {
+      window.location.hash = 'cart';
+    }
   };
 
   const handleCloseCart = () => {
@@ -331,7 +406,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
               <button
                 key={cat}
                 type="button"
-                onClick={() => setSelectedCategory(cat)}
+                onClick={() => handleSelectCategory(cat)}
                 className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-bold transition-all shrink-0 ${
                   isSelected
                     ? 'bg-rose-600 text-white shadow-xs'
@@ -379,7 +454,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
           <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
             <button
               type="button"
-              onClick={() => setActiveTab('all')}
+              onClick={() => handleSelectTab('all')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors ${
                 activeTab === 'all'
                   ? 'bg-slate-900 text-white'
@@ -390,7 +465,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('offers_only')}
+              onClick={() => handleSelectTab('offers_only')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1 ${
                 activeTab === 'offers_only'
                   ? 'bg-amber-600 text-white'
@@ -402,7 +477,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('top_discounts')}
+              onClick={() => handleSelectTab('top_discounts')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-colors flex items-center gap-1 ${
                 activeTab === 'top_discounts'
                   ? 'bg-rose-600 text-white'
@@ -429,7 +504,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
                 key={product.id}
                 product={product}
                 currency={settings.currency || 'ريال يمني'}
-                onSelect={setSelectedProduct}
+                onSelect={handleSelectProduct}
                 onQuickWhatsApp={handleQuickWhatsApp}
               />
             ))}
@@ -448,9 +523,9 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
               type="button"
               onClick={() => {
                 setSearchQuery('');
-                setSelectedCategory('الكل');
+                handleSelectCategory('الكل');
                 setSelectedLocation('كل المواقع في عتق');
-                setActiveTab('all');
+                handleSelectTab('all');
               }}
               className="inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-xl text-xs font-bold"
             >
@@ -475,7 +550,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
           </div>
 
           <button
-            onClick={() => setIsCartOpen(true)}
+            onClick={handleOpenCart}
             className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md transition-all active:scale-[0.98]"
           >
             عرض السلة
