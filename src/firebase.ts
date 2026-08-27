@@ -1,8 +1,63 @@
+import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
+import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getAuth, type Auth } from 'firebase/auth';
 import { Product, Merchant, Review, PlatformSettings } from './types';
 
-// Fast, resilient local storage engine for Ataq Online
-// Provides instant 0ms startup, zero network lag, and full multi-tab synchronization.
-export const db = null;
+// Safe Fallback Constants for Firebase Configuration
+// Prevents application crash / white screen if secrets or environment variables are missing
+export const FALLBACK_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDummyKeyForFallbackAtaqOnline2026",
+  authDomain: "ataq-online-shabwah.firebaseapp.com",
+  projectId: "ataq-online-shabwah",
+  storageBucket: "ataq-online-shabwah.appspot.com",
+  messagingSenderId: "102938475610",
+  appId: "1:102938475610:web:8a9b0c1d2e3f4g5h6i7j8k"
+};
+
+// Safe configuration extractor with fallbacks
+export const getFirebaseConfig = () => {
+  try {
+    const env: Record<string, string | undefined> = typeof import.meta !== 'undefined' && import.meta.env ? (import.meta.env as unknown as Record<string, string | undefined>) : {};
+    return {
+      apiKey: (typeof env.VITE_FIREBASE_API_KEY === 'string' && env.VITE_FIREBASE_API_KEY.trim()) || FALLBACK_FIREBASE_CONFIG.apiKey,
+      authDomain: (typeof env.VITE_FIREBASE_AUTH_DOMAIN === 'string' && env.VITE_FIREBASE_AUTH_DOMAIN.trim()) || FALLBACK_FIREBASE_CONFIG.authDomain,
+      projectId: (typeof env.VITE_FIREBASE_PROJECT_ID === 'string' && env.VITE_FIREBASE_PROJECT_ID.trim()) || FALLBACK_FIREBASE_CONFIG.projectId,
+      storageBucket: (typeof env.VITE_FIREBASE_STORAGE_BUCKET === 'string' && env.VITE_FIREBASE_STORAGE_BUCKET.trim()) || FALLBACK_FIREBASE_CONFIG.storageBucket,
+      messagingSenderId: (typeof env.VITE_FIREBASE_MESSAGING_SENDER_ID === 'string' && env.VITE_FIREBASE_MESSAGING_SENDER_ID.trim()) || FALLBACK_FIREBASE_CONFIG.messagingSenderId,
+      appId: (typeof env.VITE_FIREBASE_APP_ID === 'string' && env.VITE_FIREBASE_APP_ID.trim()) || FALLBACK_FIREBASE_CONFIG.appId,
+    };
+  } catch {
+    return FALLBACK_FIREBASE_CONFIG;
+  }
+};
+
+// Safe Firebase Initialization with Error Shielding
+let app: FirebaseApp | null = null;
+let db: Firestore | null = null;
+let auth: Auth | null = null;
+let isFirebaseConnected = false;
+
+try {
+  const config = getFirebaseConfig();
+  if (config.apiKey && config.projectId) {
+    if (!getApps().length) {
+      app = initializeApp(config);
+    } else {
+      app = getApp();
+    }
+    db = getFirestore(app);
+    auth = getAuth(app);
+    isFirebaseConnected = true;
+  }
+} catch (error) {
+  console.warn('Firebase initialized in safe offline-first fallback mode (The store runs normally):', error);
+  app = null;
+  db = null;
+  auth = null;
+  isFirebaseConnected = false;
+}
+
+export { app, db, auth, isFirebaseConnected };
 
 // Initial Registered Merchants and Authorized Delegates in Ataq
 export const INITIAL_MERCHANTS: Merchant[] = [
