@@ -39,7 +39,8 @@ import {
   UserX,
   Send,
   Tag,
-  Hash
+  Hash,
+  Bell
 } from 'lucide-react';
 import { Product, Merchant, PlatformSettings } from '../types';
 import { StatsPanel } from './StatsPanel';
@@ -47,6 +48,8 @@ import { ProductList } from './ProductList';
 import { ProductForm } from './ProductForm';
 import { BroadcastModal } from './BroadcastModal';
 import { calculateCustomerPrice, getNextSupportPhone } from '../utils/supportRouter';
+import { isProductExpired, deleteExpiredProductFromFirestore, cleanupExpiredProductsInFirestore } from '../firebase';
+import { triggerAutomaticNewProductNotification } from '../utils/autoNotificationService';
 
 interface OwnerDashboardProps {
   products: Product[];
@@ -244,21 +247,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   // 4. AUTO CLEANUP & MAINTENANCE SYSTEM
   // ─────────────────────────────────────────────────────────────────────────────
   const expiredProducts = useMemo(() => {
-    const now = Date.now();
-    return products.filter((p) => {
-      if (p.status === 'expired') return true;
-      if (p.isOffer && p.offerEndsAt) {
-        return new Date(p.offerEndsAt).getTime() < now;
-      }
-      return false;
-    });
+    return products.filter((p) => isProductExpired(p));
   }, [products]);
 
   const activeValidProducts = useMemo(() => {
     return products.length - expiredProducts.length;
   }, [products, expiredProducts]);
 
-  const handleToggleAutoCleanup = () => {
+  const handleToggleAutoCleanup = async () => {
     const updatedState = !settingsForm.autoCleanupExpired;
     const updatedSettings = {
       ...settingsForm,
@@ -266,6 +262,9 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     };
     setSettingsForm(updatedSettings);
     onUpdateSettings(updatedSettings);
+    if (updatedState) {
+      await handleExecuteImmediateCleanup();
+    }
     showToast(
       updatedState 
         ? 'تم تفعيل الحذف والتنظيف التلقائي المستمر للعروض المنتهية ⚡' 
@@ -273,29 +272,26 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     );
   };
 
-  const handleExecuteImmediateCleanup = () => {
-    const now = Date.now();
-    let cleanedCount = 0;
-
-    products.forEach((p) => {
-      let isExpired = false;
-      if (p.status === 'expired') isExpired = true;
-      if (p.isOffer && p.offerEndsAt && new Date(p.offerEndsAt).getTime() < now) {
-        isExpired = true;
-      }
-
-      if (isExpired) {
-        // Toggle offer flag and mark as out of stock / updated
-        onToggleOffer(p.id, false);
-        cleanedCount++;
-      }
-    });
-
-    if (cleanedCount > 0) {
-      showToast(`تم تنظيف وصيانة ${cleanedCount} من العروض المنتهية فورياً ⚡`);
-    } else {
+  const handleExecuteImmediateCleanup = async () => {
+    const expired = products.filter((p) => isProductExpired(p));
+    if (expired.length === 0) {
       showToast('جميع العروض الحالية سارية المفعول ولا توجد عروض منتهية ⚡');
+      return;
     }
+
+    const expiredIds = expired.map(p => p.id);
+
+    // 1. Delete from state and local storage cache
+    expiredIds.forEach(id => onDeleteProduct(id));
+
+    // 2. Delete from Firestore collection if connected
+    try {
+      await cleanupExpiredProductsInFirestore(expiredIds);
+    } catch (err) {
+      console.warn('Firestore cleanup notice:', err);
+    }
+
+    showToast(`تم تنظيف وحذف ${expired.length} من العروض المنتهية فعلياً من المتجر وقاعدة البيانات ⚡`);
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1377,10 +1373,16 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                         <span className="text-[10px] text-slate-500">({p.merchantName})</span>
                       </div>
                       <button
-                        onClick={() => onToggleOffer(p.id, false)}
-                        className="text-[11px] font-bold text-rose-600 hover:underline"
+                        onClick={async () => {
+                          onDeleteProduct(p.id);
+                          await deleteExpiredProductFromFirestore(p.id);
+                          showToast(`تم حذف العرض المنتهي "${p.name}" بنجاح 🗑️`);
+                        }}
+                        className="text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer"
+                        title="حذف العرض نهائياً من المتجر وقاعدة البيانات"
                       >
-                        إلغاء العرض الآن
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>حذف نهائي</span>
                       </button>
                     </div>
                   ))}
@@ -1622,6 +1624,57 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
               <MessageSquare className="w-4 h-4" />
               <span>توليد ومعاينة رسالة الواتساب الآن</span>
             </button>
+
+            {/* FCM & Push Notifications Broadcast Center */}
+            <div className="pt-6 border-t border-slate-200 space-y-4 text-right">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                  <Bell className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    نظام الإشعارات الفورية العامة (FCM & Push Notifications) 🔔
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    إرسال إشعار فوري لجميع الأجهزة النشطة بالخلفية بدون الحاجة لحساب أو رقم هاتف
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-rose-50/70 border border-rose-200/80 rounded-2xl p-4 text-xs text-slate-700 space-y-2">
+                <div className="flex items-center gap-2 text-rose-800 font-bold">
+                  <Flame className="w-4 h-4" />
+                  <span>اشتراك تلقائي لكافة الأجهزة في القناة العامة (Broadcast / Topics)</span>
+                </div>
+                <p className="leading-relaxed text-slate-600">
+                  فور قيام أي تاجر أو مالك بإضافة منتج جديد أو تفعيل عرض، يقوم النظام تلقائياً بصياغة عنوان تسويقي جذاب، وإدراج الصورة الكبيرة (Expanded Big Picture)، وإرسال الإشعار مع الصوت والتنبيه لكافة المستخدمين.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const sampleProduct = products[0] || {
+                      id: 'sample_1',
+                      name: 'عرض ترويجي خاص من عتق أونلاين',
+                      price: 4500,
+                      originalPrice: 6000,
+                      isOffer: true,
+                      image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&auto=format&fit=crop',
+                      merchantName: 'إدارة عتق أونلاين'
+                    };
+                    triggerAutomaticNewProductNotification(sampleProduct);
+                    setToastMessage('تم إرسال إشعار فوري تجريبي لجميع الأجهزة بنجاح! 🚀');
+                    setTimeout(() => setToastMessage(''), 4000);
+                  }}
+                  className="inline-flex items-center gap-2 bg-linear-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 text-white font-bold px-5 py-2.5 rounded-xl shadow-md transition-all text-xs cursor-pointer"
+                >
+                  <Bell className="w-4 h-4" />
+                  <span>إرسال إشعار تجريبي فوري الآن (Test Push) 🚀</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>

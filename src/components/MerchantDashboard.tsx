@@ -33,6 +33,7 @@ import { Product, Merchant, PlatformSettings } from '../types';
 import { ProductForm } from './ProductForm';
 import { BroadcastModal } from './BroadcastModal';
 import { FastImage } from './FastImage';
+import { isProductExpired } from '../firebase';
 
 interface MerchantDashboardProps {
   merchant: Merchant;
@@ -73,6 +74,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
   // Filter products belonging to this delegate/merchant
   const merchantProducts = useMemo(() => {
     return allProducts.filter((p) => {
+      if (p.status === 'deleted' || isProductExpired(p)) return false;
       const isOwner = 
         p.merchantId === merchant.id || 
         p.merchantName === merchant.name ||

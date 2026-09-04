@@ -24,6 +24,7 @@ import { OfferDetailsModal } from './OfferDetailsModal';
 import { CartModal } from './CartModal';
 import { ProductSkeletonGrid } from './ProductSkeletonGrid';
 import { getNextSupportPhone } from '../utils/supportRouter';
+import { isProductExpired } from '../firebase';
 
 interface CustomerStoreProps {
   products: Product[];
@@ -90,7 +91,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
   const [isSyncingHeader, setIsSyncingHeader] = useState(false);
   const [syncHeaderDone, setSyncHeaderDone] = useState(false);
 
-  // Comprehensive Hash-based Navigation System
+  // Comprehensive Hash & Deep Linking Navigation System
   useEffect(() => {
     const syncWithHash = () => {
       const rawHash = window.location.hash;
@@ -99,6 +100,31 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
       if (cleanHash === 'view-image') {
         // Fullscreen image zoom view (product modal remains open underneath)
         return;
+      }
+
+      // Deep linking via #product-<id>
+      if (cleanHash.startsWith('product-')) {
+        const prodId = cleanHash.replace('product-', '');
+        const targetProduct = products.find((p) => p.id === prodId);
+        if (targetProduct) {
+          setSelectedProduct(targetProduct);
+          setIsCartOpen(false);
+          return;
+        }
+      }
+
+      // Check query parameter ?productId=...
+      if (typeof window !== 'undefined' && window.location.search) {
+        const searchParams = new URLSearchParams(window.location.search);
+        const qProdId = searchParams.get('productId') || searchParams.get('product');
+        if (qProdId) {
+          const targetProduct = products.find((p) => p.id === qProdId);
+          if (targetProduct) {
+            setSelectedProduct(targetProduct);
+            setIsCartOpen(false);
+            return;
+          }
+        }
       }
 
       if (cleanHash === 'product') {
@@ -135,16 +161,30 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
       }
     };
 
-    // Synchronize state on initial load if hash is present
-    if (window.location.hash) {
-      syncWithHash();
-    }
+    // Synchronize state on initial load or hash changes
+    syncWithHash();
+
+    const handleOpenProductEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ productId: string }>;
+      const targetId = customEvent.detail?.productId;
+      if (targetId) {
+        const found = products.find((p) => p.id === targetId);
+        if (found) {
+          setSelectedProduct(found);
+          setIsCartOpen(false);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+      }
+    };
 
     window.addEventListener('hashchange', syncWithHash);
+    window.addEventListener('ataq_open_product_details', handleOpenProductEvent);
+
     return () => {
       window.removeEventListener('hashchange', syncWithHash);
+      window.removeEventListener('ataq_open_product_details', handleOpenProductEvent);
     };
-  }, []);
+  }, [products]);
 
   const handleSelectTab = (tab: 'all' | 'offers_only' | 'top_discounts') => {
     setActiveTab(tab);
@@ -185,14 +225,15 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
 
   const handleSelectProduct = (product: Product) => {
     setSelectedProduct(product);
-    if (window.location.hash !== '#product') {
-      window.location.hash = 'product';
+    const targetHash = 'product-' + product.id;
+    if (window.location.hash !== '#' + targetHash) {
+      window.location.hash = targetHash;
     }
   };
 
   const handleCloseProductModal = () => {
     setSelectedProduct(null);
-    if (window.location.hash === '#product' || window.location.hash === '#view-image') {
+    if (window.location.hash.startsWith('#product') || window.location.hash === '#view-image') {
       window.history.back();
     }
   };
@@ -232,10 +273,17 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
   // Fast Filter
   const filteredProducts = useMemo(() => {
     return products.filter((item) => {
-      // Exclude hidden products
-      if (item.status === 'hidden') return false;
+      // 1. Exclude hidden, expired, or deleted products
+      if (item.status === 'hidden' || item.status === 'expired' || item.status === 'deleted') {
+        return false;
+      }
 
-      // 1. Search Query Filter
+      // 2. Client-side Query Filter: Exclude expired offers by comparing expiration date with current time
+      if (isProductExpired(item)) {
+        return false;
+      }
+
+      // 3. Search Query Filter
       if (searchQuery.trim()) {
         const queryLower = searchQuery.toLowerCase().trim();
         const matchesName = item.name.toLowerCase().includes(queryLower);
@@ -297,7 +345,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
   };
 
   const totalOffersCount = useMemo(() => {
-    return products.filter((p) => p.isOffer).length;
+    return products.filter((p) => p.isOffer && !isProductExpired(p) && p.status !== 'hidden' && p.status !== 'expired' && p.status !== 'deleted').length;
   }, [products]);
 
   const totalCartCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);

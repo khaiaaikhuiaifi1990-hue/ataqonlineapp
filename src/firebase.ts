@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getFirestore, type Firestore, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { getAuth, type Auth } from 'firebase/auth';
 import { Product, Merchant, Review, PlatformSettings } from './types';
 
@@ -38,8 +38,21 @@ let auth: Auth | null = null;
 let isFirebaseConnected = false;
 
 try {
-  const config = getFirebaseConfig();
-  if (config.apiKey && config.projectId) {
+  const env: Record<string, string | undefined> = typeof import.meta !== 'undefined' && import.meta.env ? (import.meta.env as unknown as Record<string, string | undefined>) : {};
+  const rawKey = typeof env.VITE_FIREBASE_API_KEY === 'string' ? env.VITE_FIREBASE_API_KEY.trim() : '';
+  const rawProjectId = typeof env.VITE_FIREBASE_PROJECT_ID === 'string' ? env.VITE_FIREBASE_PROJECT_ID.trim() : '';
+
+  // Only initialize real Firebase if actual non-dummy credentials are configured in environment
+  const hasRealCredentials = Boolean(
+    rawKey &&
+    rawProjectId &&
+    rawKey.length > 15 &&
+    !rawKey.includes('DummyKey') &&
+    !rawProjectId.includes('ataq-online-shabwah')
+  );
+
+  if (hasRealCredentials) {
+    const config = getFirebaseConfig();
     if (!getApps().length) {
       app = initializeApp(config);
     } else {
@@ -48,9 +61,16 @@ try {
     db = getFirestore(app);
     auth = getAuth(app);
     isFirebaseConnected = true;
+    console.info('Firebase cloud database initialized successfully 🚀');
+  } else {
+    // Offline-first local storage mode (fast, stable, and zero network errors)
+    app = null;
+    db = null;
+    auth = null;
+    isFirebaseConnected = false;
   }
 } catch (error) {
-  console.warn('Firebase initialized in safe offline-first fallback mode (The store runs normally):', error);
+  console.warn('Firebase safe offline-first fallback active:', error);
   app = null;
   db = null;
   auth = null;
@@ -361,25 +381,94 @@ const LOCAL_MERCHANTS_KEY = 'ataq_online_merchants_cache_v2';
 const LOCAL_SETTINGS_KEY = 'ataq_online_settings_cache_v2';
 const LOCAL_REVIEWS_KEY = 'ataq_online_reviews_cache_v2';
 
-// Safe Local Cache Helpers
+// Helper to determine if a product is expired or marked for cleanup
+export function isProductExpired(p: Product): boolean {
+  if (!p) return true;
+  if (p.status === 'expired' || p.status === 'deleted' || p.status === 'hidden') {
+    return true;
+  }
+  
+  // Specific expired offers explicitly identified for cleanup
+  const n = (p.name || '').trim().toLowerCase();
+  if (
+    n.includes('بخور الكويت') || 
+    n === 'لى' || 
+    n === 'لي' || 
+    n.includes('كفاف العمال الشقه نسائي') || 
+    n.includes('كفاف القماش الشقه نسائي') ||
+    (n.includes('كفاف') && n.includes('نسائي'))
+  ) {
+    return true;
+  }
+
+  // Check offer validity and expiration timestamp
+  const expiry = p.offerEndsAt || p.expiryDate;
+  if (expiry) {
+    const expiryTimestamp = new Date(expiry).getTime();
+    if (!isNaN(expiryTimestamp) && expiryTimestamp <= Date.now()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Delete or mark expired document in Firestore collection
+export async function deleteExpiredProductFromFirestore(productId: string): Promise<boolean> {
+  if (!db || !productId) return false;
+  try {
+    const docRef = doc(db, 'products', productId);
+    await deleteDoc(docRef);
+    return true;
+  } catch (err) {
+    try {
+      const docRef = doc(db, 'products', productId);
+      await updateDoc(docRef, { status: 'deleted', isOffer: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Batch cleanup for Firestore collection
+export async function cleanupExpiredProductsInFirestore(productIds: string[]): Promise<void> {
+  if (!db || !productIds || productIds.length === 0) return;
+  try {
+    await Promise.allSettled(productIds.map((id) => deleteExpiredProductFromFirestore(id)));
+  } catch {
+    // Non-blocking catch
+  }
+}
+
+// Safe Local Cache Helpers with Auto-Sanitization
 export function getLocalCachedProducts(): Product[] {
   try {
     const cached = localStorage.getItem(LOCAL_PRODUCTS_KEY);
     if (cached) {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        // Immediately sanitize and exclude any expired or deleted items
+        const validOnly = parsed.filter((p) => !isProductExpired(p));
+        if (validOnly.length !== parsed.length) {
+          localStorage.setItem(LOCAL_PRODUCTS_KEY, JSON.stringify(validOnly));
+        }
+        if (validOnly.length > 0) {
+          return validOnly;
+        }
       }
     }
   } catch (e) {
     console.error('Error loading products cache:', e);
   }
-  return INITIAL_PRODUCTS;
+  return INITIAL_PRODUCTS.filter((p) => !isProductExpired(p));
 }
 
 export function setLocalCachedProducts(products: Product[]): void {
   try {
-    const sanitized = products.map((p) => ({
+    // Filter out expired and deleted items before caching
+    const validProducts = products.filter((p) => !isProductExpired(p));
+    const sanitized = validProducts.map((p) => ({
       id: String(p.id || ''),
       name: String(p.name || ''),
       category: String(p.category || 'أخرى'),
@@ -398,6 +487,7 @@ export function setLocalCachedProducts(products: Product[]): void {
       isOffer: Boolean(p.isOffer),
       isFeatured: Boolean(p.isFeatured),
       offerEndsAt: p.offerEndsAt ? String(p.offerEndsAt) : undefined,
+      expiryDate: p.expiryDate ? String(p.expiryDate) : undefined,
       rating: Number(p.rating) || 5.0,
       reviewsCount: Number(p.reviewsCount) || 0,
       viewsCount: Number(p.viewsCount) || 0,

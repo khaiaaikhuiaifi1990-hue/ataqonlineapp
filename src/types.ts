@@ -20,13 +20,14 @@ export interface Product {
   isOffer: boolean;
   isFeatured?: boolean; // Highlighted / pinned offer
   offerEndsAt?: string; // ISO date string
+  expiryDate?: string; // Secondary expiry date field
   offerDurationDays?: number; // Configured duration in days
   offerDurationText?: string; // Textual duration
   rating?: number;
   reviewsCount?: number;
   viewsCount?: number;
   createdAt: number;
-  status: 'active' | 'out_of_stock' | 'expired' | 'hidden';
+  status: 'active' | 'out_of_stock' | 'expired' | 'hidden' | 'deleted';
 }
 
 export type StoreCategory = 

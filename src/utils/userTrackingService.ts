@@ -4,8 +4,12 @@
  * and broadcasts real-time user count updates to the Owner Dashboard.
  */
 
+import { getOrCreateAnonymousDeviceToken, GLOBAL_PUSH_TOPIC } from './autoNotificationService';
+
 export interface RegisteredDevice {
   deviceId: string;
+  fcmToken?: string;
+  topics?: string[];
   deviceType: 'mobile' | 'desktop' | 'tablet';
   registeredAt: number;
   lastActiveAt: number;
@@ -109,10 +113,15 @@ export function trackDeviceOnStartup(): void {
     const now = Date.now();
     const existingIndex = devices.findIndex((d) => d.deviceId === deviceId);
 
+    const fcmToken = getOrCreateAnonymousDeviceToken();
+    const topics = [GLOBAL_PUSH_TOPIC, 'topics/new_products'];
+
     if (existingIndex >= 0) {
       // Update existing device active time & visits
       devices[existingIndex] = {
         ...devices[existingIndex],
+        fcmToken: devices[existingIndex].fcmToken || fcmToken,
+        topics: devices[existingIndex].topics || topics,
         lastActiveAt: now,
         visitsCount: (devices[existingIndex].visitsCount || 1) + 1
       };
@@ -120,6 +129,8 @@ export function trackDeviceOnStartup(): void {
       // Register new user device
       const newDevice: RegisteredDevice = {
         deviceId,
+        fcmToken,
+        topics,
         deviceType: getDeviceType(),
         registeredAt: now,
         lastActiveAt: now,

@@ -10,7 +10,10 @@ import {
   setLocalCachedReviews,
   INITIAL_PRODUCTS,
   INITIAL_MERCHANTS,
-  INITIAL_SETTINGS
+  INITIAL_SETTINGS,
+  isProductExpired,
+  deleteExpiredProductFromFirestore,
+  cleanupExpiredProductsInFirestore
 } from './firebase';
 import { Product, Merchant, Review, PlatformSettings, CartItem, ActiveView } from './types';
 import { CustomerStore } from './components/CustomerStore';
@@ -20,7 +23,10 @@ import { MerchantLoginModal } from './components/MerchantLoginModal';
 import { OwnerLoginModal } from './components/OwnerLoginModal';
 import { AdminPortal } from './components/AdminPortal';
 import { AutoNotificationBanner } from './components/AutoNotificationBanner';
-import { triggerAutomaticNewProductNotification } from './utils/autoNotificationService';
+import { 
+  triggerAutomaticNewProductNotification,
+  registerPushServiceWorker
+} from './utils/autoNotificationService';
 import { trackDeviceOnStartup } from './utils/userTrackingService';
 
 const CART_STORAGE_KEY = 'ataq_online_cart_v2';
@@ -112,37 +118,52 @@ export function App() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Silently register device & update users counter on startup
+  // Silently register device & push notifications service worker on startup
   useEffect(() => {
     trackDeviceOnStartup();
+    registerPushServiceWorker();
   }, []);
 
-  // Continuous Auto Cleanup Effect for Expired Offers
+  // Global deep link listener: switch to store view when notification is clicked
   useEffect(() => {
-    if (!settings.autoCleanupExpired) return;
+    const handleDeepLink = () => {
+      setActiveView('store');
+    };
+    window.addEventListener('ataq_open_product_details', handleDeepLink);
+    return () => window.removeEventListener('ataq_open_product_details', handleDeepLink);
+  }, []);
 
-    const runCleanup = () => {
-      const now = Date.now();
-      let hasChanges = false;
+  // Fast Startup Verification & Continuous Auto Cleanup for Expired Offers
+  useEffect(() => {
+    const runCleanup = async () => {
+      const expiredItems = products.filter((p) => isProductExpired(p));
+      if (expiredItems.length > 0) {
+        const expiredIds = expiredItems.map((p) => p.id);
 
-      const cleaned = products.map((p) => {
-        if (p.isOffer && p.offerEndsAt && new Date(p.offerEndsAt).getTime() < now) {
-          hasChanges = true;
-          return { ...p, isOffer: false, status: 'expired' as const };
+        // 1. Immediately prune expired items from state and local cache
+        const validProducts = products.filter((p) => !isProductExpired(p));
+        setProducts(validProducts);
+        setLocalCachedProducts(validProducts);
+
+        // 2. Remove from cart if any expired item was in cart
+        setCartItems((prev) => prev.filter((item) => !expiredIds.includes(item.product.id)));
+
+        // 3. Delete or mark as deleted in Firestore collection
+        try {
+          await cleanupExpiredProductsInFirestore(expiredIds);
+        } catch (err) {
+          console.warn('Firestore auto-cleanup notice:', err);
         }
-        return p;
-      });
-
-      if (hasChanges) {
-        setProducts(cleaned);
-        setLocalCachedProducts(cleaned);
       }
     };
 
+    // Run rapid verification immediately on launch and whenever products change
     runCleanup();
-    const interval = setInterval(runCleanup, 60000); // Check every minute
+
+    // Check periodically every 30 seconds
+    const interval = setInterval(runCleanup, 30000);
     return () => clearInterval(interval);
-  }, [settings.autoCleanupExpired, products]);
+  }, [products, settings.autoCleanupExpired]);
 
   // ─── PRODUCT HANDLERS ──────────────────────────────────────────
   const handleAddProduct = useCallback((newProduct: Product) => {
@@ -152,8 +173,8 @@ export function App() {
       return updated;
     });
 
-    // 🚀 Automatic Push Notification to all users
-    triggerAutomaticNewProductNotification(newProduct.name, newProduct.image);
+    // 🚀 Automatic Push Notification to all users (SHEIN-style rich push with Big Picture & Deep Linking)
+    triggerAutomaticNewProductNotification(newProduct);
   }, []);
 
   const handleUpdateProduct = useCallback((updatedProduct: Product) => {
@@ -173,6 +194,9 @@ export function App() {
 
     // Also remove from cart if present
     setCartItems((prev) => prev.filter((item) => item.product.id !== productId));
+
+    // Also delete from Firestore if connected
+    deleteExpiredProductFromFirestore(productId).catch(() => {});
   }, []);
 
   const handleUpdateQuantity = useCallback((productId: string, newQty: number) => {
@@ -193,6 +217,11 @@ export function App() {
 
   const handleToggleOffer = useCallback((productId: string, isOffer: boolean) => {
     setProducts((prev) => {
+      const target = prev.find((p) => p.id === productId);
+      if (target && isOffer) {
+        // Trigger offer announcement push notification
+        triggerAutomaticNewProductNotification({ ...target, isOffer: true });
+      }
       const updated = prev.map((p) =>
         p.id === productId ? { ...p, isOffer } : p
       );

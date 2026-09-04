@@ -14,6 +14,54 @@
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
     
     <script>
+      // Circular-safe JSON.stringify safeguard preventing 'Converting circular structure to JSON'
+      (function() {
+        try {
+          const _nativeStringify = JSON.stringify;
+          JSON.stringify = function(value, replacer, space) {
+            const seen = new WeakSet();
+            const safeReplacer = function(key, val) {
+              if (typeof val === 'object' && val !== null) {
+                if (seen.has(val)) {
+                  return '[Circular]';
+                }
+                seen.add(val);
+              }
+              if (typeof replacer === 'function') {
+                return replacer.call(this, key, val);
+              }
+              return val;
+            };
+
+            try {
+              if (Array.isArray(replacer)) {
+                return _nativeStringify(value, (k, v) => {
+                  if (k !== '' && !replacer.includes(k)) return undefined;
+                  return safeReplacer.call(this, k, v);
+                }, space);
+              }
+              return _nativeStringify(value, safeReplacer, space);
+            } catch (err) {
+              try {
+                return _nativeStringify(value, (k, v) => {
+                  if (typeof v === 'object' && v !== null) {
+                    try {
+                      if (seen.has(v)) return '[Circular]';
+                      seen.add(v);
+                    } catch {
+                      return '[Unserializable]';
+                    }
+                  }
+                  return v;
+                }, space);
+              } catch {
+                return 'null';
+              }
+            }
+          };
+        } catch {}
+      })();
+
       // Prevent Vite HMR issues only in sandboxed preview environments
       (function() {
         const isDevEnv = window.location.hostname.includes('ais-dev') || 

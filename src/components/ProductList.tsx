@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Product } from '../types';
 import { FastImage } from './FastImage';
+import { isProductExpired } from '../firebase';
 
 interface ProductListProps {
   products: Product[];
@@ -34,6 +35,7 @@ export const ProductList: React.FC<ProductListProps> = ({
   const [selectedCat, setSelectedCat] = useState('الكل');
 
   const filtered = products.filter((p) => {
+    if (p.status === 'deleted' || p.status === 'expired' || isProductExpired(p)) return false;
     if (selectedCat !== 'الكل' && p.category !== selectedCat) return false;
     if (searchTerm.trim()) {
       const q = searchTerm.toLowerCase();
