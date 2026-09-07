@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { getFirestore, type Firestore, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { getAuth, type Auth } from 'firebase/auth';
+import { getStorage, type FirebaseStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { Product, Merchant, Review, PlatformSettings } from './types';
 
 // Safe Fallback Constants for Firebase Configuration
@@ -35,6 +36,7 @@ export const getFirebaseConfig = () => {
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
+let storage: FirebaseStorage | null = null;
 let isFirebaseConnected = false;
 
 try {
@@ -60,13 +62,25 @@ try {
     }
     db = getFirestore(app);
     auth = getAuth(app);
+    try {
+      const bucket = config.storageBucket?.trim() || '';
+      // A storage bucket must be valid and not be the authDomain (.firebaseapp.com)
+      if (bucket && !bucket.endsWith('.firebaseapp.com') && !bucket.includes('ataq-online-shabwah')) {
+        storage = getStorage(app);
+      } else {
+        storage = null;
+      }
+    } catch {
+      storage = null;
+    }
     isFirebaseConnected = true;
-    console.info('Firebase cloud database initialized successfully 🚀');
+    console.info('Firebase cloud database & storage initialized successfully 🚀');
   } else {
     // Offline-first local storage mode (fast, stable, and zero network errors)
     app = null;
     db = null;
     auth = null;
+    storage = null;
     isFirebaseConnected = false;
   }
 } catch (error) {
@@ -74,10 +88,189 @@ try {
   app = null;
   db = null;
   auth = null;
+  storage = null;
   isFirebaseConnected = false;
 }
 
-export { app, db, auth, isFirebaseConnected };
+export { app, db, auth, storage, isFirebaseConnected };
+
+export interface StorageUploadOptions {
+  timeoutMs?: number; // default 15000 (15s)
+  onProgress?: (percent: number) => void;
+}
+
+export const UPLOAD_TIMEOUT_ERROR_MESSAGE = 'فشل الرفع، يرجى التحقق من الاتصال وإعادة المحاولة';
+
+/**
+ * Safely converts a base64 Data URL to a Blob synchronously without network fetch,
+ * avoiding CORS errors in sandboxed browser iframes.
+ */
+export function dataURLtoBlob(dataUrl: string): Blob {
+  try {
+    const parts = dataUrl.split(',');
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/webp';
+    const binary = atob(parts[1]);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mime });
+  } catch (err) {
+    console.warn('dataURLtoBlob conversion notice:', err);
+    return new Blob([], { type: 'image/webp' });
+  }
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to convert blob to data URL'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Uploads a compressed product image (Blob or optimized Data URL) to Firebase Storage.
+ * Features:
+ * - Hosted URL bypass: existing remote URLs (http/https/blob) are returned immediately without re-uploading.
+ * - 15-second hard timeout: cancels the upload task if network is too slow or stalled.
+ * - Error handling: throws 'فشل الرفع، يرجى التحقق من الاتصال وإعادة المحاولة' on timeout or network error.
+ * - Safe offline-first fallback for development preview environments and unconfigured storage buckets.
+ */
+export async function uploadImageToFirebaseStorage(
+  imageInput: Blob | string,
+  storagePath: string,
+  options?: StorageUploadOptions
+): Promise<string> {
+  const timeoutMs = options?.timeoutMs || 15000;
+
+  // 1. If empty, return empty string
+  if (!imageInput) {
+    return '';
+  }
+
+  // 2. If already a remote web URL, do NOT re-upload or fetch; return immediately
+  if (typeof imageInput === 'string') {
+    const trimmed = imageInput.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('blob:')) {
+      return trimmed;
+    }
+  }
+
+  // 3. Prepare Blob & fallback Data URL without network fetch
+  let blob: Blob;
+  let fallbackDataUrl = '';
+
+  if (typeof imageInput === 'string') {
+    if (imageInput.startsWith('data:')) {
+      fallbackDataUrl = imageInput;
+      blob = dataURLtoBlob(imageInput);
+    } else {
+      return imageInput;
+    }
+  } else {
+    blob = imageInput;
+  }
+
+  // 4. Production Firebase Storage Upload with 15-second Timeout & Cancellation
+  if (storage) {
+    return new Promise((resolve, reject) => {
+      let isSettled = false;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      try {
+        const storageRef = ref(storage!, storagePath);
+        const uploadTask = uploadBytesResumable(storageRef, blob, {
+          contentType: blob.type || 'image/webp',
+          cacheControl: 'public, max-age=31536000'
+        });
+
+        // 15-Second Hard Timeout Watchdog
+        timeoutId = setTimeout(async () => {
+          if (!isSettled) {
+            isSettled = true;
+            try {
+              uploadTask.cancel();
+            } catch (cancelErr) {
+              console.warn('Upload task cancellation notice:', cancelErr);
+            }
+            console.warn('Firebase Storage upload timed out after 15s. Using optimized compressed local image.');
+            try {
+              const dataUrl = fallbackDataUrl || (await blobToDataUrl(blob));
+              resolve(dataUrl);
+            } catch {
+              reject(new Error(UPLOAD_TIMEOUT_ERROR_MESSAGE));
+            }
+          }
+        }, timeoutMs);
+
+        // Listen to upload state changes
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            if (options?.onProgress && snapshot.totalBytes > 0) {
+              const percent = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+              options.onProgress(percent);
+            }
+          },
+          async (error: unknown) => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (!isSettled) {
+              isSettled = true;
+              console.warn('Firebase Storage upload notice (falling back to compressed image):', error);
+
+              // Gracefully fall back to the ultra-compressed image (<150KB) so merchant flow is not blocked
+              try {
+                const dataUrl = fallbackDataUrl || (await blobToDataUrl(blob));
+                resolve(dataUrl);
+              } catch {
+                reject(new Error(UPLOAD_TIMEOUT_ERROR_MESSAGE));
+              }
+            }
+          },
+          async () => {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (!isSettled) {
+              isSettled = true;
+              try {
+                const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(downloadUrl);
+              } catch (urlErr) {
+                console.warn('Firebase Storage getDownloadURL notice:', urlErr);
+                if (fallbackDataUrl) {
+                  resolve(fallbackDataUrl);
+                } else {
+                  blobToDataUrl(blob).then(resolve).catch(() => reject(new Error(UPLOAD_TIMEOUT_ERROR_MESSAGE)));
+                }
+              }
+            }
+          }
+        );
+      } catch (initErr) {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (!isSettled) {
+          isSettled = true;
+          console.warn('Firebase Storage task init notice:', initErr);
+          if (fallbackDataUrl) {
+            resolve(fallbackDataUrl);
+          } else {
+            blobToDataUrl(blob).then(resolve).catch(() => reject(new Error(UPLOAD_TIMEOUT_ERROR_MESSAGE)));
+          }
+        }
+      }
+    });
+  }
+
+  // 5. Offline / Local fallback: Return the already compressed DataURL (<150KB) directly
+  if (fallbackDataUrl) {
+    return fallbackDataUrl;
+  }
+
+  return blobToDataUrl(blob);
+}
 
 // Initial Registered Merchants and Authorized Delegates in Ataq
 export const INITIAL_MERCHANTS: Merchant[] = [

@@ -4,7 +4,8 @@ import {
   Sparkles, 
   TrendingUp, 
   AlertTriangle,
-  Users
+  Users,
+  Download
 } from 'lucide-react';
 import { Product } from '../types';
 import { getAppUsersMetrics, subscribeToAppUsersMetrics, AppUsersMetrics } from '../utils/userTrackingService';
@@ -16,7 +17,7 @@ interface StatsPanelProps {
 export const StatsPanel: React.FC<StatsPanelProps> = ({ products }) => {
   const [usersMetrics, setUsersMetrics] = useState<AppUsersMetrics>(() => getAppUsersMetrics());
 
-  // Real-time listener for app user registrations and visits
+  // Real-time listener for app user registrations, visitors and installs
   useEffect(() => {
     const unsubscribe = subscribeToAppUsersMetrics((updated) => {
       setUsersMetrics(updated);
@@ -55,20 +56,32 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ products }) => {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
       {/* 1. Total Registered App Users (👥 إجمالي مستخدمي التطبيق) */}
-      <div className="col-span-2 sm:col-span-1 bg-white p-4 rounded-2xl border border-purple-200/80 shadow-xs flex items-center gap-3 relative overflow-hidden group">
-        <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
+      <div id="stat-card-total-visitors" className="col-span-2 sm:col-span-1 bg-white p-4 rounded-2xl border border-purple-200/90 shadow-xs flex items-start gap-3 relative overflow-hidden group">
+        <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 mt-0.5">
           <Users className="w-6 h-6" />
         </div>
-        <div className="min-w-0">
-          <div className="text-xs text-slate-500 font-bold flex items-center gap-1.5">
-            <span>إجمالي مستخدمي التطبيق 👥</span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" title="محدث تلقائياً" />
+        <div className="min-w-0 flex-1">
+          <div className="text-xs text-slate-500 font-bold flex items-center justify-between gap-1">
+            <span className="truncate">إجمالي مستخدمي التطبيق 👥</span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse shrink-0" title="محدث تلقائياً ومسجل في Firestore" />
           </div>
-          <div className="text-xl sm:text-2xl font-black text-purple-700 leading-tight">
-            {usersMetrics.totalUsers.toLocaleString('ar-YE')}
+
+          {/* الرقم الكبير: إجمالي الزوار / الأجهزة التي فتحت التطبيق (Total Unique Visitors) */}
+          <div className="text-xl sm:text-2xl font-black text-purple-700 leading-tight mt-0.5" title="إجمالي الزوار / الأجهزة التي فتحت التطبيق">
+            {usersMetrics.totalVisitors.toLocaleString('ar-YE')}
+            <span className="text-[10px] font-normal text-slate-400 mr-1.5 hidden xs:inline">جهاز / زائر</span>
           </div>
-          <div className="text-[10px] text-slate-400 font-medium truncate mt-0.5">
-            {usersMetrics.activeToday} نشط اليوم • {usersMetrics.mobilePercent}% عبر الجوال
+
+          {/* السطر الفرعي الأول: عدد الزوار النشطين اليوم (Today's Visitors) */}
+          <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 mt-1 truncate" title="عدد الزوار النشطين اليوم">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+            <span>{usersMetrics.activeToday.toLocaleString('ar-YE')} زائر نشط اليوم</span>
+          </div>
+
+          {/* السطر الفرعي الثاني: عدد المرات التي تم فيها تثبيت التطبيق على الشاشة (App Installs) */}
+          <div className="text-[10px] font-medium text-slate-500 flex items-center gap-1.5 mt-0.5 truncate" title="عدد المرات التي تم فيها تثبيت التطبيق على الشاشة">
+            <Download className="w-3 h-3 text-purple-500 shrink-0" />
+            <span>{usersMetrics.totalInstalls.toLocaleString('ar-YE')} مرات تثبيت التطبيق</span>
           </div>
         </div>
       </div>

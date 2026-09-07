@@ -1,0 +1,19 @@
+{
+  "name": "عتق أونلاين | Ataq Online",
+  "short_name": "عتق أونلاين",
+  "description": "قناة عرض وتسويق الخدمات والسلع المحلية في شبوة",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#b7336a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

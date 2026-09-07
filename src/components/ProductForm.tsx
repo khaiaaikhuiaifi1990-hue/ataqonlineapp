@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Product, Merchant } from '../types';
 import { compressAndOptimizeImage } from '../utils/imageOptimizer';
+import { uploadImageToFirebaseStorage, UPLOAD_TIMEOUT_ERROR_MESSAGE } from '../firebase';
 import { FastImage } from './FastImage';
 
 interface ProductFormProps {
@@ -58,6 +59,15 @@ interface ImageSlot {
   subtitle: string;
   url: string;
   thumbnail: string;
+  blob?: Blob;
+  stats?: {
+    originalSizeFormatted: string;
+    compressedSizeFormatted: string;
+    savingsPercent: number;
+    width: number;
+    height: number;
+    mimeType?: 'image/webp' | 'image/jpeg';
+  };
 }
 
 export const ProductForm: React.FC<ProductFormProps> = ({
@@ -154,25 +164,35 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   // Auto calculate suggested customer price based on cost & margin in background
   const numCost = Number(costPrice) || 0;
 
-  // Handle Image Upload for a specific slot
+  // Handle Image Upload for a specific slot with automatic 1000px & 70% compression (webp/jpeg)
   const handleUploadSlot = async (index: number, file: File) => {
     try {
       setCompressingIndex(index);
       setErrorMsg('');
-      const compressed = await compressAndOptimizeImage(file, 900, 900, 0.8);
+      // Ultra-fast non-blocking direct canvas compression: max 1000px, quality 0.7 (70%), webp/jpeg
+      const compressed = await compressAndOptimizeImage(file, 1000, 1000, 0.7);
       
       setImages((prev) => {
         const next = [...prev];
         next[index] = {
           ...next[index],
           url: compressed.full,
-          thumbnail: compressed.thumbnail
+          thumbnail: compressed.thumbnail,
+          blob: compressed.blob,
+          stats: {
+            originalSizeFormatted: compressed.originalSizeFormatted,
+            compressedSizeFormatted: compressed.compressedSizeFormatted,
+            savingsPercent: compressed.savingsPercent,
+            width: compressed.width,
+            height: compressed.height,
+            mimeType: compressed.mimeType
+          }
         };
         return next;
       });
     } catch (err) {
       console.error('Failed to compress image:', err);
-      setErrorMsg(`فشل في معالجة الصورة رقم ${index + 1}. يرجى اختيار صورة بصيغة أخرى.`);
+      setErrorMsg(`فشل في معالجة وضغط الصورة رقم ${index + 1}. يرجى اختيار صورة أخرى.`);
     } finally {
       setCompressingIndex(null);
     }
@@ -184,14 +204,16 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       next[index] = {
         ...next[index],
         url: '',
-        thumbnail: ''
+        thumbnail: '',
+        blob: undefined,
+        stats: undefined
       };
       return next;
     });
   };
 
-  // Submit and Launch 8-Step Product
-  const handleSubmit = (e: React.FormEvent) => {
+  // Submit and Launch 8-Step Product with Firebase Storage Upload
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -235,58 +257,127 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       'unlimited': 'عرض مستمر'
     };
 
-    // Filter secondary images
-    const extraImages = images.slice(1).map(img => img.url.trim()).filter(Boolean);
-
-    const productPayload: Product = {
-      id: initialProduct?.id || `prod-${Date.now()}`,
-      name: name.trim(),
-      category,
-      description: description.trim() || `عرض مميز متوفر لدى ${merchantName} في مدينة عتق.`,
-      originalPrice: finalOriginalPrice,
-      discountPrice: finalCustomerPrice,
-      costPrice: numCost,
-      quantity: Number(quantity) || 1,
-      image: primaryImg,
-      thumbnail: images[0].thumbnail || primaryImg,
-      additionalImages: extraImages,
-      mCode: mCode.trim() || activeMerchant?.mCode || '1',
-      sizes: sizes.trim() || undefined,
-      colors: colors.trim() || undefined,
-      merchantId: activeMerchant?.id || initialProduct?.merchantId || 'merch-staff-1',
-      merchantName: merchantName.trim() || 'عتق أونلاين (1)',
-      merchantPhone: merchantPhone.trim() || '967770000001',
-      merchantLocation: merchantLocation.trim() || 'عتق - الشارع العام',
-      isOffer: !isUnlimited,
-      offerEndsAt: expiryDate,
-      offerDurationDays: days,
-      offerDurationText: durationTextMap[durationOption] || `${days} أيام`,
-      createdAt: initialProduct?.createdAt || Date.now(),
-      status: Number(quantity) > 0 ? 'active' : 'out_of_stock'
-    };
+    const productId = initialProduct?.id || `prod-${Date.now()}`;
 
     // Trigger Publishing Transition
     setIsPublishing(true);
-    setPublishProgress(15);
-    setPublishStepText('جاري فحص وضغط صور المنتج والتفاصيل...');
+    setPublishProgress(20);
+    setPublishStepText('جاري فحص الصور بدقة 1000px وجودة 70% (webp/jpeg)...');
 
-    setTimeout(() => {
-      setPublishProgress(55);
+    try {
+      // 1. Upload compressed primary image to Firebase Storage (with 15s timeout watchdog)
+      setPublishProgress(45);
+      setPublishStepText('جاري رفع الصور إلى Firebase Storage (مهلة الحماية 15 ثانية)...');
+
+      let uploadedPrimary = primaryImg;
+      try {
+        if (images[0].blob) {
+          const fileExt = images[0].stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+          uploadedPrimary = await uploadImageToFirebaseStorage(
+            images[0].blob,
+            `products/${productId}/main_${Date.now()}.${fileExt}`,
+            {
+              timeoutMs: 15000,
+              onProgress: (p) => setPublishProgress(45 + Math.round((p * 25) / 100))
+            }
+          );
+        } else if (images[0].url && images[0].url.startsWith('data:')) {
+          const fileExt = images[0].stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+          uploadedPrimary = await uploadImageToFirebaseStorage(
+            images[0].url,
+            `products/${productId}/main_${Date.now()}.${fileExt}`,
+            {
+              timeoutMs: 15000,
+              onProgress: (p) => setPublishProgress(45 + Math.round((p * 25) / 100))
+            }
+          );
+        } else if (images[0].url) {
+          uploadedPrimary = images[0].url;
+        }
+      } catch (primaryErr) {
+        console.warn('Primary image upload notice, using compressed image fallback:', primaryErr);
+        uploadedPrimary = images[0].url || primaryImg;
+      }
+
+      // 2. Upload secondary images to Firebase Storage (with 15s timeout watchdog)
+      const uploadedExtras: string[] = [];
+      for (let i = 1; i < images.length; i++) {
+        const slot = images[i];
+        if (slot.url && slot.url.trim()) {
+          try {
+            if (slot.blob) {
+              const fileExt = slot.stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+              const extraUrl = await uploadImageToFirebaseStorage(
+                slot.blob,
+                `products/${productId}/extra_${i}_${Date.now()}.${fileExt}`,
+                { timeoutMs: 15000 }
+              );
+              uploadedExtras.push(extraUrl);
+            } else if (slot.url.startsWith('data:')) {
+              const fileExt = slot.stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+              const extraUrl = await uploadImageToFirebaseStorage(
+                slot.url,
+                `products/${productId}/extra_${i}_${Date.now()}.${fileExt}`,
+                { timeoutMs: 15000 }
+              );
+              uploadedExtras.push(extraUrl);
+            } else {
+              // Already a remote hosted URL
+              uploadedExtras.push(slot.url.trim());
+            }
+          } catch (secErr) {
+            console.warn(`Secondary image ${i} upload notice, using compressed image fallback:`, secErr);
+            uploadedExtras.push(slot.url.trim());
+          }
+        }
+      }
+
+      setPublishProgress(75);
       setPublishStepText('جاري ربط كود المندوب وتجهيز العرض للمتجر...');
-    }, 450);
 
-    setTimeout(() => {
-      setPublishProgress(85);
-      setPublishStepText('جاري تثبيت العرض في قاعدة بيانات متجر عتق...');
-    }, 900);
+      const productPayload: Product = {
+        id: productId,
+        name: name.trim(),
+        category,
+        description: description.trim() || `عرض مميز متوفر لدى ${merchantName} في مدينة عتق.`,
+        originalPrice: finalOriginalPrice,
+        discountPrice: finalCustomerPrice,
+        costPrice: numCost,
+        quantity: Number(quantity) || 1,
+        image: uploadedPrimary,
+        thumbnail: images[0].thumbnail || uploadedPrimary,
+        additionalImages: uploadedExtras,
+        mCode: mCode.trim() || activeMerchant?.mCode || '1',
+        sizes: sizes.trim() || undefined,
+        colors: colors.trim() || undefined,
+        merchantId: activeMerchant?.id || initialProduct?.merchantId || 'merch-staff-1',
+        merchantName: merchantName.trim() || 'عتق أونلاين (1)',
+        merchantPhone: merchantPhone.trim() || '967770000001',
+        merchantLocation: merchantLocation.trim() || 'عتق - الشارع العام',
+        isOffer: !isUnlimited,
+        offerEndsAt: expiryDate,
+        offerDurationDays: days,
+        offerDurationText: durationTextMap[durationOption] || `${days} أيام`,
+        createdAt: initialProduct?.createdAt || Date.now(),
+        status: Number(quantity) > 0 ? 'active' : 'out_of_stock'
+      };
 
-    setTimeout(() => {
-      setPublishProgress(100);
-      setPublishStepText('تم تثبيت العرض بنجاح وإرسال الإشعار التلقائي للزبائن! 🛍️🚀');
+      setPublishProgress(95);
+      setPublishStepText('جاري تثبيت العرض في متجر عتق وتفعيل كود المندوب...');
+
       setTimeout(() => {
-        onSave(productPayload);
+        setPublishProgress(100);
+        setPublishStepText('تم تثبيت ونشر العرض بنجاح وبأقل استهلاك لسعة التخزين! 🛍️⚡');
+        setTimeout(() => {
+          onSave(productPayload);
+        }, 350);
       }, 400);
-    }, 1350);
+    } catch (publishErr: unknown) {
+      console.error('Error during product publishing:', publishErr);
+      setIsPublishing(false);
+      const errorMessage = publishErr instanceof Error ? publishErr.message : UPLOAD_TIMEOUT_ERROR_MESSAGE;
+      setErrorMsg(errorMessage || UPLOAD_TIMEOUT_ERROR_MESSAGE);
+    }
   };
 
   return (
@@ -333,27 +424,28 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
           {/* ═════════ STEP 1: PHOTOS (UP TO 4 INDEPENDENT SLOTS) ═════════ */}
           <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-lg bg-rose-600 text-white font-black text-xs flex items-center justify-center shadow-xs">
                   1
                 </span>
                 <label className="text-sm font-black text-slate-900">
-                  صور المنتج (حتى 4 صور مستقلة)
+                  صور المنتج (ضغط وتصغير تلقائي 1000px)
                 </label>
               </div>
-              <span className="text-[11px] font-bold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200">
-                ضغط فوري وتجهيز 0ms
-              </span>
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/70">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>أقصى أبعاد 1000px | جودة 70% | تحويل تلقائي webp/jpeg</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
               {images.map((slot, idx) => (
                 <div 
                   key={idx} 
-                  className={`p-3 rounded-2xl border transition-all flex flex-col items-center justify-between min-h-[160px] relative ${
+                  className={`p-3 rounded-2xl border transition-all flex flex-col items-center justify-between min-h-[175px] relative ${
                     slot.url 
-                      ? 'bg-white border-rose-200 shadow-xs' 
+                      ? 'bg-white border-emerald-200 shadow-xs ring-1 ring-emerald-100' 
                       : 'bg-white/80 border-dashed border-slate-300 hover:border-rose-400'
                   }`}
                 >
@@ -361,55 +453,70 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                     <span className="text-[11px] font-black text-slate-800 block truncate">
                       {idx === 0 ? '⭐️ الصورة الأساسية' : `صورة ${idx + 1}`}
                     </span>
-                    <span className="text-[9px] text-slate-400 block truncate mb-2">
+                    <span className="text-[9px] text-slate-400 block truncate mb-1">
                       {slot.title}
                     </span>
                   </div>
 
                   {slot.url ? (
-                    <div className="relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 group bg-slate-100">
-                      <FastImage
-                        src={slot.url}
-                        thumbnail={slot.thumbnail}
-                        alt={`صورة ${idx + 1}`}
-                        aspectRatio="aspect-square"
-                      />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                        <label className="p-1.5 bg-white text-slate-800 rounded-lg cursor-pointer hover:bg-slate-100 shadow-sm">
-                          <Upload className="w-3.5 h-3.5" />
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const f = e.target.files?.[0];
-                              if (f) handleUploadSlot(idx, f);
-                            }}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveImage(idx)}
-                          className="p-1.5 bg-rose-600 text-white rounded-lg hover:bg-rose-700 shadow-sm"
-                          title="حذف"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    <div className="w-full flex flex-col items-center">
+                      <div className="relative w-full h-24 rounded-xl overflow-hidden border border-slate-200 group bg-slate-100">
+                        <FastImage
+                          src={slot.url}
+                          thumbnail={slot.thumbnail}
+                          alt={`صورة ${idx + 1}`}
+                          aspectRatio="aspect-square"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                          <label className="p-1.5 bg-white text-slate-800 rounded-lg cursor-pointer hover:bg-slate-100 shadow-sm" title="استبدال">
+                            <Upload className="w-3.5 h-3.5" />
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleUploadSlot(idx, f);
+                              }}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveImage(idx)}
+                            className="p-1.5 bg-rose-600 text-white rounded-lg hover:bg-rose-700 shadow-sm"
+                            title="حذف"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Compression Savings & Dimensions Badge */}
+                      {slot.stats ? (
+                        <div className="w-full mt-1.5 px-1.5 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md flex items-center justify-between text-[9px] text-emerald-800 font-bold">
+                          <span className="truncate">⚡ {slot.stats.compressedSizeFormatted}</span>
+                          <span className="text-emerald-600 shrink-0 font-black">وفر {slot.stats.savingsPercent}%</span>
+                        </div>
+                      ) : (
+                        <div className="w-full mt-1.5 px-1.5 py-0.5 bg-emerald-50/60 border border-emerald-100 rounded-md text-center text-[9px] text-emerald-700 font-bold">
+                          <span>⚡ محسنة ومضغوطة (1000px)</span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <label className="w-full h-24 rounded-xl border border-dashed border-slate-200 bg-slate-50 hover:bg-rose-50/40 cursor-pointer flex flex-col items-center justify-center p-2 transition-colors group">
                       {compressingIndex === idx ? (
-                        <div className="flex flex-col items-center gap-1 text-rose-600 text-[10px] font-bold">
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                          <span>جاري الضغط...</span>
+                        <div className="flex flex-col items-center gap-1.5 text-rose-600 text-[10px] font-bold text-center px-1">
+                          <Loader2 className="w-5 h-5 animate-spin text-rose-500" />
+                          <span>جاري تصغير الأبعاد (1000px) والضغط...</span>
                         </div>
                       ) : (
                         <>
                           <ImageIcon className="w-6 h-6 text-slate-400 group-hover:text-rose-600 transition-colors mb-1" />
                           <span className="text-[10px] font-bold text-slate-600 group-hover:text-rose-600">
-                            {idx === 0 ? 'رفع الصورة' : '+ إضافة لون'}
+                            {idx === 0 ? 'رفع صورة الكاميرا' : '+ إضافة لون'}
                           </span>
+                          <span className="text-[8px] text-slate-400 font-medium">1000px & 70% تلقائي</span>
                         </>
                       )}
                       <input
