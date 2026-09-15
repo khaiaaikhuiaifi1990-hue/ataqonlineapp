@@ -1,7 +1,7 @@
-// Ataq Online - Advanced Push Notifications & Background Service Worker
+// Ataq Online - World-Class Push Notifications & Background Service Worker (SHEIN-Style)
 // Compatible with standard Web Push, PWA, and Firebase Cloud Messaging (FCM)
 
-const CACHE_NAME = 'ataq-push-sw-v2';
+const CACHE_NAME = 'ataq-push-sw-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -10,12 +10,35 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     self.clients.claim().then(() => {
-      console.log('Ataq Online Push Service Worker activated');
+      console.log('Ataq Online Push Service Worker active and claimed clients');
     })
   );
 });
 
-// 1. Handle Web Push / FCM Push Notifications
+// Safe notification dispatcher that checks permission and catches promise rejections
+function safeShowNotification(title, options) {
+  try {
+    // 1. Verify notification permission in ServiceWorker scope
+    if (typeof self.Notification !== 'undefined' && self.Notification.permission !== 'granted') {
+      return Promise.resolve();
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+      return Promise.resolve();
+    }
+
+    if (self.registration && typeof self.registration.showNotification === 'function') {
+      return self.registration.showNotification(title, options).catch((err) => {
+        // Silently catch and suppress permission or browser restrictions (e.g. iframe sandbox)
+        console.warn('SW showNotification suppressed or failed:', err);
+      });
+    }
+  } catch (err) {
+    console.warn('SW safeShowNotification synchronous check notice:', err);
+  }
+  return Promise.resolve();
+}
+
+// 1. Handle Web Push / FCM Background Push Notifications
 self.addEventListener('push', (event) => {
   let data = {};
   if (event.data) {
@@ -23,18 +46,22 @@ self.addEventListener('push', (event) => {
       data = event.data.json();
     } catch (e) {
       data = {
-        title: '🔥 وصل منتج جديد في عتق أونلاين!',
-        body: event.data.text() || 'تصفح أحدث العروض والمنتجات الحصرية الآن 🛍️'
+        title: '🔥 وصل منتج جديد الآن!',
+        body: event.data.text() || 'تصفح أحدث العروض والمنتجات الحصرية في عتق أونلاين 🛍️'
       };
     }
   }
 
-  const title = data.title || '🔥 وصل منتج جديد الآن!';
-  const body = data.body || 'تصفح أحدث العروض والمنتجات الحصرية في عتق أونلاين 🛍️';
-  const icon = data.icon || '/favicon.svg';
-  const image = data.image || data.productImage; // Expanded Big Picture (SHEIN style)
-  const productId = data.productId || '';
-  const deepLinkUrl = data.url || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+  // Handle nested FCM structures (data or notification)
+  const notifObj = data.notification || {};
+  const dataObj = data.data || {};
+
+  const title = notifObj.title || dataObj.title || data.title || '🔥 وصل منتج جديد الآن!';
+  const body = notifObj.body || dataObj.body || data.body || 'تصفح أحدث العروض والمنتجات الحصرية في عتق أونلاين 🛍️';
+  const icon = notifObj.icon || dataObj.icon || data.icon || '/favicon.svg';
+  const image = notifObj.image || dataObj.image || data.image || data.productImage; // Expanded Big Picture (SHEIN style)
+  const productId = dataObj.productId || data.productId || '';
+  const deepLinkUrl = dataObj.url || data.url || (productId ? `/?productId=${productId}#product-${productId}` : '/');
 
   const options = {
     body: body,
@@ -65,7 +92,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(title, options)
+    safeShowNotification(title, options)
   );
 });
 
@@ -109,7 +136,7 @@ self.addEventListener('message', (event) => {
     };
 
     event.waitUntil(
-      self.registration.showNotification(title, options)
+      safeShowNotification(title, options)
     );
   }
 });
@@ -128,7 +155,7 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If a window is already open, focus it and navigate
+      // If a window is already open, focus it and trigger the in-app deep link
       for (const client of clientList) {
         if ('focus' in client) {
           client.focus();
@@ -139,14 +166,11 @@ self.addEventListener('notificationclick', (event) => {
               url: targetUrl
             });
           }
-          if (client.navigate && targetUrl) {
-            client.navigate(targetUrl);
-          }
           return;
         }
       }
 
-      // If no window is currently open, open a new browser window/tab at the deep link
+      // If no window is currently open (background / terminated state), open at the deep link
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }

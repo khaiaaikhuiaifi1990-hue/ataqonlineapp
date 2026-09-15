@@ -160,7 +160,7 @@ export const OfferDetailsModal: React.FC<OfferDetailsModalProps> = ({
       }
     }
 
-    return product.isOffer ? '3 أيام (72 ساعة)' : 'عرض مستمر (دائم)';
+    return product.isOffer ? 'أسبوع كامل (7 أيام)' : 'عرض مستمر (دائم)';
   };
 
   const offerDurationDisplay = getOfferDurationDisplay();

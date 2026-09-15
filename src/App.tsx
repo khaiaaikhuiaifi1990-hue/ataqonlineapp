@@ -8,12 +8,13 @@ import {
   setLocalCachedSettings,
   getLocalCachedReviews,
   setLocalCachedReviews,
-  INITIAL_PRODUCTS,
   INITIAL_MERCHANTS,
   INITIAL_SETTINGS,
   isProductExpired,
+  saveProductToFirestore,
   deleteExpiredProductFromFirestore,
-  cleanupExpiredProductsInFirestore
+  cleanupExpiredProductsInFirestore,
+  subscribeToFirestoreProducts
 } from './firebase';
 import { Product, Merchant, Review, PlatformSettings, CartItem, ActiveView } from './types';
 import { CustomerStore } from './components/CustomerStore';
@@ -23,6 +24,7 @@ import { MerchantLoginModal } from './components/MerchantLoginModal';
 import { OwnerLoginModal } from './components/OwnerLoginModal';
 import { AdminPortal } from './components/AdminPortal';
 import { AutoNotificationBanner } from './components/AutoNotificationBanner';
+import { SplashScreen } from './components/SplashScreen';
 import { 
   triggerAutomaticNewProductNotification,
   registerPushServiceWorker
@@ -34,7 +36,10 @@ const ACTIVE_MERCHANT_SESSION_KEY = 'ataq_active_merchant_v2';
 const OWNER_AUTH_SESSION_KEY = 'ataq_owner_auth_v2';
 
 export function App() {
-  // 1. Core State loaded instantly (0ms) from local cache
+  // Splash Screen State with strict <= 800ms ceiling
+  const [showSplash, setShowSplash] = useState(true);
+
+  // 1. Core State loaded instantly (0ms) from local cache (Cache First)
   const [products, setProducts] = useState<Product[]>(() => getLocalCachedProducts());
   const [merchants, setMerchants] = useState<Merchant[]>(() => getLocalCachedMerchants());
   const [settings, setSettings] = useState<PlatformSettings>(() => getLocalCachedSettings());
@@ -118,10 +123,41 @@ export function App() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Silently register device & push notifications service worker on startup
+  // Non-blocking background initialization: run device tracking & SW registration
+  // strictly in the background without blocking initial paint or the splash screen
   useEffect(() => {
-    trackDeviceOnStartup();
-    registerPushServiceWorker();
+    const runBackgroundBootstrap = () => {
+      trackDeviceOnStartup().catch(() => {});
+      registerPushServiceWorker();
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const handle = window.requestIdleCallback(runBackgroundBootstrap, { timeout: 3000 });
+      return () => {
+        if ('cancelIdleCallback' in window) window.cancelIdleCallback(handle);
+      };
+    } else {
+      const timer = setTimeout(runBackgroundBootstrap, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  // Real-time Firestore sync with zero-dummy data and offline cache persistence
+  useEffect(() => {
+    const unsubscribe = subscribeToFirestoreProducts(
+      (liveProducts) => {
+        setProducts(liveProducts);
+      },
+      (err: any) => {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore products subscription notice:', err);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // Global deep link listener: switch to store view when notification is clicked
@@ -133,7 +169,7 @@ export function App() {
     return () => window.removeEventListener('ataq_open_product_details', handleDeepLink);
   }, []);
 
-  // Fast Startup Verification & Continuous Auto Cleanup for Expired Offers
+  // Continuous Auto Cleanup for Expired Offers (Deferred initial run to prevent blocking startup)
   useEffect(() => {
     const runCleanup = async () => {
       const expiredItems = products.filter((p) => isProductExpired(p));
@@ -157,24 +193,38 @@ export function App() {
       }
     };
 
-    // Run rapid verification immediately on launch and whenever products change
-    runCleanup();
-
-    // Check periodically every 30 seconds
+    // Defer initial run by 2 seconds so startup remains instantaneous (< 1s)
+    const initialTimer = setTimeout(runCleanup, 2000);
     const interval = setInterval(runCleanup, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
   }, [products, settings.autoCleanupExpired]);
 
   // ─── PRODUCT HANDLERS ──────────────────────────────────────────
   const handleAddProduct = useCallback((newProduct: Product) => {
+    // 1. Instant local state update (0ms UI response)
     setProducts((prev) => {
       const updated = [newProduct, ...prev];
       setLocalCachedProducts(updated);
       return updated;
     });
 
-    // 🚀 Automatic Push Notification to all users (SHEIN-style rich push with Big Picture & Deep Linking)
-    triggerAutomaticNewProductNotification(newProduct);
+    // 2. Non-blocking Firestore persistence in the background
+    saveProductToFirestore(newProduct).catch((err) => {
+      console.warn('Background Firestore save notice:', err);
+    });
+
+    // 3. 🚀 Non-blocking Background Event for Push Notifications:
+    // Detached from the main execution thread so the supervisor/merchant doesn't wait
+    setTimeout(() => {
+      try {
+        triggerAutomaticNewProductNotification(newProduct);
+      } catch (err) {
+        console.warn('Background push notification error:', err);
+      }
+    }, 120);
   }, []);
 
   const handleUpdateProduct = useCallback((updatedProduct: Product) => {
@@ -182,6 +232,11 @@ export function App() {
       const updated = prev.map((p) => (p.id === updatedProduct.id ? updatedProduct : p));
       setLocalCachedProducts(updated);
       return updated;
+    });
+
+    // Background Firestore update
+    saveProductToFirestore(updatedProduct).catch((err) => {
+      console.warn('Background Firestore update notice:', err);
     });
   }, []);
 
@@ -282,8 +337,8 @@ export function App() {
   );
 
   const handleResetToDefault = useCallback(() => {
-    setProducts(INITIAL_PRODUCTS);
-    setLocalCachedProducts(INITIAL_PRODUCTS);
+    setProducts([]);
+    setLocalCachedProducts([]);
 
     setMerchants(INITIAL_MERCHANTS);
     setLocalCachedMerchants(INITIAL_MERCHANTS);
@@ -357,6 +412,20 @@ export function App() {
   // ─── RENDER VIEWS ──────────────────────────────────────────────
   return (
     <>
+      {showSplash && (
+        <SplashScreen
+          maxDurationMs={800}
+          onComplete={() => {
+            setShowSplash(false);
+            if (typeof window !== 'undefined' && typeof (window as any).__hideHtmlSplash === 'function') {
+              try {
+                (window as any).__hideHtmlSplash();
+              } catch {}
+            }
+          }}
+        />
+      )}
+
       <AutoNotificationBanner />
 
       {activeView === 'admin_portal' && (

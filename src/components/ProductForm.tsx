@@ -122,7 +122,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   const [durationOption, setDurationOption] = useState<string>(
     initialProduct?.offerDurationDays 
       ? String(initialProduct.offerDurationDays) 
-      : (initialProduct?.isOffer === false ? 'unlimited' : '3')
+      : (initialProduct?.isOffer === false ? 'unlimited' : '7')
   );
 
   // 5. Merchant Code (mCode)
@@ -164,13 +164,13 @@ export const ProductForm: React.FC<ProductFormProps> = ({
   // Auto calculate suggested customer price based on cost & margin in background
   const numCost = Number(costPrice) || 0;
 
-  // Handle Image Upload for a specific slot with automatic 1000px & 70% compression (webp/jpeg)
+  // Handle Image Upload for a specific slot with automatic 800px & 70% compression (webp/jpeg)
   const handleUploadSlot = async (index: number, file: File) => {
     try {
       setCompressingIndex(index);
       setErrorMsg('');
-      // Ultra-fast non-blocking direct canvas compression: max 1000px, quality 0.7 (70%), webp/jpeg
-      const compressed = await compressAndOptimizeImage(file, 1000, 1000, 0.7);
+      // Ultra-fast non-blocking direct canvas compression: max 800px, quality 0.7 (70%), webp/jpeg
+      const compressed = await compressAndOptimizeImage(file, 800, 800, 0.7);
       
       setImages((prev) => {
         const next = [...prev];
@@ -212,7 +212,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     });
   };
 
-  // Submit and Launch 8-Step Product with Firebase Storage Upload
+  // Submit and Launch 8-Step Product with Instant Ultra-Fast Publishing (< 1-2s)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -241,7 +241,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
     // Determine Expiry Date & Offer Status
     const isUnlimited = durationOption === 'unlimited';
-    const days = isUnlimited ? 365 : parseInt(durationOption, 10) || 3;
+    const days = isUnlimited ? 365 : parseInt(durationOption, 10) || 7;
     const expiryDate = isUnlimited 
       ? undefined 
       : new Date(Date.now() + days * 86400000).toISOString();
@@ -259,81 +259,35 @@ export const ProductForm: React.FC<ProductFormProps> = ({
 
     const productId = initialProduct?.id || `prod-${Date.now()}`;
 
-    // Trigger Publishing Transition
+    // Instant Publishing Transition
     setIsPublishing(true);
-    setPublishProgress(20);
-    setPublishStepText('جاري فحص الصور بدقة 1000px وجودة 70% (webp/jpeg)...');
+    setPublishProgress(60);
+    setPublishStepText('جاري الحفظ والتثبيت الفوري...');
 
     try {
-      // 1. Upload compressed primary image to Firebase Storage (with 15s timeout watchdog)
-      setPublishProgress(45);
-      setPublishStepText('جاري رفع الصور إلى Firebase Storage (مهلة الحماية 15 ثانية)...');
+      // 1. Parallel ultra-fast upload (Images are ALREADY pre-compressed to 800px on selection)
+      // Fast 2s timeout watchdog per slot ensures zero stalling or hanging
+      const uploadTasks = images.map(async (slot, index) => {
+        if (!slot.url || !slot.url.trim()) return '';
+        if (slot.url.startsWith('http://') || slot.url.startsWith('https://')) return slot.url.trim();
 
-      let uploadedPrimary = primaryImg;
-      try {
-        if (images[0].blob) {
-          const fileExt = images[0].stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
-          uploadedPrimary = await uploadImageToFirebaseStorage(
-            images[0].blob,
-            `products/${productId}/main_${Date.now()}.${fileExt}`,
-            {
-              timeoutMs: 15000,
-              onProgress: (p) => setPublishProgress(45 + Math.round((p * 25) / 100))
-            }
+        try {
+          const fileExt = slot.stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
+          const path = `products/${productId}/${index === 0 ? 'main' : `extra_${index}`}_${Date.now()}.${fileExt}`;
+          return await uploadImageToFirebaseStorage(
+            slot.blob || slot.url,
+            path,
+            { timeoutMs: 2000 }
           );
-        } else if (images[0].url && images[0].url.startsWith('data:')) {
-          const fileExt = images[0].stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
-          uploadedPrimary = await uploadImageToFirebaseStorage(
-            images[0].url,
-            `products/${productId}/main_${Date.now()}.${fileExt}`,
-            {
-              timeoutMs: 15000,
-              onProgress: (p) => setPublishProgress(45 + Math.round((p * 25) / 100))
-            }
-          );
-        } else if (images[0].url) {
-          uploadedPrimary = images[0].url;
+        } catch {
+          // Instant safe fallback to the pre-compressed lightweight Data URL (< 50KB)
+          return slot.url.trim();
         }
-      } catch (primaryErr) {
-        console.warn('Primary image upload notice, using compressed image fallback:', primaryErr);
-        uploadedPrimary = images[0].url || primaryImg;
-      }
+      });
 
-      // 2. Upload secondary images to Firebase Storage (with 15s timeout watchdog)
-      const uploadedExtras: string[] = [];
-      for (let i = 1; i < images.length; i++) {
-        const slot = images[i];
-        if (slot.url && slot.url.trim()) {
-          try {
-            if (slot.blob) {
-              const fileExt = slot.stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
-              const extraUrl = await uploadImageToFirebaseStorage(
-                slot.blob,
-                `products/${productId}/extra_${i}_${Date.now()}.${fileExt}`,
-                { timeoutMs: 15000 }
-              );
-              uploadedExtras.push(extraUrl);
-            } else if (slot.url.startsWith('data:')) {
-              const fileExt = slot.stats?.mimeType === 'image/jpeg' ? 'jpg' : 'webp';
-              const extraUrl = await uploadImageToFirebaseStorage(
-                slot.url,
-                `products/${productId}/extra_${i}_${Date.now()}.${fileExt}`,
-                { timeoutMs: 15000 }
-              );
-              uploadedExtras.push(extraUrl);
-            } else {
-              // Already a remote hosted URL
-              uploadedExtras.push(slot.url.trim());
-            }
-          } catch (secErr) {
-            console.warn(`Secondary image ${i} upload notice, using compressed image fallback:`, secErr);
-            uploadedExtras.push(slot.url.trim());
-          }
-        }
-      }
-
-      setPublishProgress(75);
-      setPublishStepText('جاري ربط كود المندوب وتجهيز العرض للمتجر...');
+      const uploadResults = await Promise.all(uploadTasks);
+      const uploadedPrimary = uploadResults[0] || primaryImg;
+      const uploadedExtras = uploadResults.slice(1).filter((u) => Boolean(u && u.trim()));
 
       const productPayload: Product = {
         id: productId,
@@ -362,16 +316,12 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         status: Number(quantity) > 0 ? 'active' : 'out_of_stock'
       };
 
-      setPublishProgress(95);
-      setPublishStepText('جاري تثبيت العرض في متجر عتق وتفعيل كود المندوب...');
+      setPublishProgress(100);
+      setPublishStepText('تم النشر بنجاح! 🛍️⚡');
 
-      setTimeout(() => {
-        setPublishProgress(100);
-        setPublishStepText('تم تثبيت ونشر العرض بنجاح وبأقل استهلاك لسعة التخزين! 🛍️⚡');
-        setTimeout(() => {
-          onSave(productPayload);
-        }, 350);
-      }, 400);
+      // Immediate UI close and save: zero blocking delay
+      onSave(productPayload);
+      onClose();
     } catch (publishErr: unknown) {
       console.error('Error during product publishing:', publishErr);
       setIsPublishing(false);
@@ -430,12 +380,12 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                   1
                 </span>
                 <label className="text-sm font-black text-slate-900">
-                  صور المنتج (ضغط وتصغير تلقائي 1000px)
+                  صور المنتج (ضغط وتصغير تلقائي 800px)
                 </label>
               </div>
               <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/70">
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span>أقصى أبعاد 1000px | جودة 70% | تحويل تلقائي webp/jpeg</span>
+                <span>أقصى أبعاد 800px | جودة 70% | تحويل فوري webp/jpeg</span>
               </div>
             </div>
 
@@ -485,6 +435,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                             onClick={() => handleRemoveImage(idx)}
                             className="p-1.5 bg-rose-600 text-white rounded-lg hover:bg-rose-700 shadow-sm"
                             title="حذف"
+                            aria-label="حذف الصورة"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -499,7 +450,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                         </div>
                       ) : (
                         <div className="w-full mt-1.5 px-1.5 py-0.5 bg-emerald-50/60 border border-emerald-100 rounded-md text-center text-[9px] text-emerald-700 font-bold">
-                          <span>⚡ محسنة ومضغوطة (1000px)</span>
+                          <span>⚡ محسنة ومضغوطة (800px)</span>
                         </div>
                       )}
                     </div>
@@ -508,7 +459,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                       {compressingIndex === idx ? (
                         <div className="flex flex-col items-center gap-1.5 text-rose-600 text-[10px] font-bold text-center px-1">
                           <Loader2 className="w-5 h-5 animate-spin text-rose-500" />
-                          <span>جاري تصغير الأبعاد (1000px) والضغط...</span>
+                          <span>جاري تصغير الأبعاد (800px) والضغط الفوري...</span>
                         </div>
                       ) : (
                         <>
@@ -516,7 +467,7 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                           <span className="text-[10px] font-bold text-slate-600 group-hover:text-rose-600">
                             {idx === 0 ? 'رفع صورة الكاميرا' : '+ إضافة لون'}
                           </span>
-                          <span className="text-[8px] text-slate-400 font-medium">1000px & 70% تلقائي</span>
+                          <span className="text-[8px] text-slate-400 font-medium">800px & 70% فوري</span>
                         </>
                       )}
                       <input

@@ -14,10 +14,32 @@
     <meta name="description" content="عتق اونلاين - منصة العروض والمنتجات المتميزة" />
     <title>عتق اونلاين | Ataq Online</title>
 
-    <!-- Google Fonts for Ultra Clean Arabic Typography -->
+    <!-- Google Fonts for Ultra Clean Arabic Typography (Non-blocking with font-display: swap) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" media="print" onload="this.media='all'">
+    <noscript>
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap">
+    </noscript>
+    
+    <script>
+      // Non-blocking splash controller with strict 800ms ceiling
+      (function() {
+        window.__hideHtmlSplash = function() {
+          var el = document.getElementById('initial-html-splash');
+          if (el && !el.classList.contains('splash-fading')) {
+            el.classList.add('splash-fading');
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+            setTimeout(function() {
+              if (el && el.parentNode) el.parentNode.removeChild(el);
+            }, 200);
+          }
+        };
+        // Guarantee removal within at most 800ms regardless of network/device status
+        setTimeout(window.__hideHtmlSplash, 800);
+      })();
+    </script>
     
     <script>
       // Circular-safe JSON.stringify safeguard preventing 'Converting circular structure to JSON'
@@ -128,6 +150,22 @@
     </script>
   </head>
   <body class="bg-slate-50 text-slate-900 font-cairo antialiased selection:bg-rose-500 selection:text-white min-h-screen">
+    <!-- Instant Native HTML Splash Screen (Renders at 0ms before JS bundles load, max timeout 800ms) -->
+    <div id="initial-html-splash" style="position:fixed;inset:0;z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;background-color:#ffffff;transition:opacity 0.2s ease-out;font-family:'Cairo',system-ui,-apple-system,sans-serif;direction:rtl;">
+      <div style="width:84px;height:84px;border-radius:24px;background:linear-gradient(135deg,#b7336a,#eb7a98);display:flex;align-items:center;justify-content:center;box-shadow:0 12px 28px rgba(183,51,106,0.25);margin-bottom:18px;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/>
+          <path d="M3 6h18"/>
+          <path d="M16 10a4 4 0 0 1-8 0"/>
+        </svg>
+      </div>
+      <div style="font-size:24px;font-weight:900;color:#0f172a;letter-spacing:-0.5px;">عتق أونلاين</div>
+      <div style="font-size:12px;color:#64748b;margin-top:4px;font-weight:500;">قناة عرض وتسويق الخدمات والسلع المحلية في شبوة</div>
+      <div style="margin-top:24px;width:160px;height:4px;background:#f1f5f9;border-radius:999px;overflow:hidden;">
+        <div style="width:70%;height:100%;background:linear-gradient(90deg,#b7336a,#f59e0b);border-radius:999px;"></div>
+      </div>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

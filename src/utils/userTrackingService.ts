@@ -220,58 +220,83 @@ export async function trackDeviceOnStartup(): Promise<void> {
 
     localStorage.setItem(LAST_VISIT_DATE_KEY, todayStr);
 
-    // 2. Persist device registration to Firestore
+    // 2. Persist device registration to Firestore in detached non-blocking background
     if (db) {
-      try {
-        const visitorDocRef = doc(db, 'visitors', deviceId);
-        const fcmToken = getOrCreateAnonymousDeviceToken();
+      const runFirestoreSync = async () => {
+        try {
+          const visitorDocRef = doc(db!, 'visitors', deviceId);
+          const fcmToken = getOrCreateAnonymousDeviceToken();
 
-        if (isNewDevice) {
-          // Write unique device record
-          await setDoc(visitorDocRef, {
-            visitorId: deviceId,
-            deviceId,
-            fcmToken: fcmToken || null,
-            topics: [GLOBAL_PUSH_TOPIC, 'topics/new_products'],
-            deviceType,
-            firstVisitedAt: Date.now(),
-            lastActiveAt: Date.now(),
-            lastActiveDate: todayStr,
-            visitsCount: 1,
-            installedApp: installed,
-            userAgent: navigator.userAgent.slice(0, 150)
-          }, { merge: true });
+          // Create a 2.5s network timeout to prevent any Firestore connection hanging
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Firestore timeout')), 2500)
+          );
 
-          // Atomically increment aggregate analytics counter
-          const analyticsRef = doc(db, 'analytics', 'metrics');
-          await setDoc(analyticsRef, {
-            totalVisitors: increment(1),
-            activeToday: increment(1),
-            lastUpdatedDate: todayStr
-          }, { merge: true });
-        } else {
-          // Returning device: update activity and visits
-          await setDoc(visitorDocRef, {
-            lastActiveAt: Date.now(),
-            lastActiveDate: todayStr,
-            visitsCount: increment(1),
-            installedApp: installed
-          }, { merge: true });
+          if (isNewDevice) {
+            // Write unique device record and analytics concurrently
+            const writeVisitor = setDoc(visitorDocRef, {
+              visitorId: deviceId,
+              deviceId,
+              fcmToken: fcmToken || null,
+              topics: [GLOBAL_PUSH_TOPIC, 'topics/new_products'],
+              deviceType,
+              firstVisitedAt: Date.now(),
+              lastActiveAt: Date.now(),
+              lastActiveDate: todayStr,
+              visitsCount: 1,
+              installedApp: installed,
+              userAgent: navigator.userAgent.slice(0, 150)
+            }, { merge: true });
 
-          if (isFirstVisitToday) {
-            const analyticsRef = doc(db, 'analytics', 'metrics');
-            await setDoc(analyticsRef, {
+            const analyticsRef = doc(db!, 'analytics', 'metrics');
+            const writeAnalytics = setDoc(analyticsRef, {
+              totalVisitors: increment(1),
               activeToday: increment(1),
               lastUpdatedDate: todayStr
             }, { merge: true });
+
+            await Promise.race([
+              Promise.allSettled([writeVisitor, writeAnalytics]),
+              timeoutPromise
+            ]);
+          } else {
+            // Returning device: update activity and visits
+            const writeVisitor = setDoc(visitorDocRef, {
+              lastActiveAt: Date.now(),
+              lastActiveDate: todayStr,
+              visitsCount: increment(1),
+              installedApp: installed
+            }, { merge: true });
+
+            const ops: Promise<unknown>[] = [writeVisitor];
+
+            if (isFirstVisitToday) {
+              const analyticsRef = doc(db!, 'analytics', 'metrics');
+              ops.push(setDoc(analyticsRef, {
+                activeToday: increment(1),
+                lastUpdatedDate: todayStr
+              }, { merge: true }));
+            }
+
+            await Promise.race([
+              Promise.allSettled(ops),
+              timeoutPromise
+            ]);
           }
+        } catch (firestoreErr) {
+          // Completely silent fallback, non-blocking
         }
-      } catch (firestoreErr) {
-        console.warn('Firestore visitor tracking notice:', firestoreErr);
+      };
+
+      // Execute in idle or timeout background
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        window.requestIdleCallback(() => { runFirestoreSync().catch(() => {}); }, { timeout: 3000 });
+      } else {
+        setTimeout(() => { runFirestoreSync().catch(() => {}); }, 1200);
       }
     }
   } catch (err) {
-    console.warn('Startup device tracking error:', err);
+    console.warn('Startup device tracking notice:', err);
   }
 }
 
@@ -421,8 +446,10 @@ export function subscribeToAppUsersMetrics(callback: (metrics: AppUsersMetrics) 
           saveLocalMetrics(merged);
           callback(merged);
         }
-      }, (err) => {
-        console.warn('Firestore metrics snapshot notice:', err);
+      }, (err: any) => {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore metrics snapshot notice:', err);
+        }
       });
     } catch (e) {
       console.warn('Firestore onSnapshot subscription notice:', e);

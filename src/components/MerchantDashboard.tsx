@@ -188,7 +188,7 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
       showToast('تم حفظ وتحديث بيانات العرض بنجاح ⚡');
     } else {
       onAddProduct(enriched);
-      showToast('تم نشر وتثبيت العرض الجديد في سوق عتق بنجاح 🚀');
+      showToast('تم النشر بنجاح 🚀');
     }
     setIsFormOpen(false);
     setEditingProduct(null);

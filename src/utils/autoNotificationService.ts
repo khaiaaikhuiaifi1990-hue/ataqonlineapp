@@ -82,20 +82,35 @@ export function getOrCreateAnonymousDeviceToken(): string {
 
 async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<void> {
   if (!db || !token) return;
-  try {
-    const tokenDocRef = doc(db, 'device_tokens', token);
-    await setDoc(tokenDocRef, {
-      fcmDeviceToken: token,
-      subscribedTopics: topics,
-      registeredAt: Date.now(),
-      lastSeenAt: Date.now(),
-      platform: 'web',
-      isAnonymous: true,
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.substring(0, 120) : 'unknown'
-    }, { merge: true });
-  } catch (err) {
-    // Non-blocking cloud registration
-    console.warn('Device token cloud sync fallback:', err);
+
+  const runSync = async () => {
+    try {
+      const tokenDocRef = doc(db!, 'device_tokens', token);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Token sync timeout')), 2000)
+      );
+
+      await Promise.race([
+        setDoc(tokenDocRef, {
+          fcmDeviceToken: token,
+          subscribedTopics: topics,
+          registeredAt: Date.now(),
+          lastSeenAt: Date.now(),
+          platform: 'web',
+          isAnonymous: true,
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.substring(0, 120) : 'unknown'
+        }, { merge: true }),
+        timeoutPromise
+      ]);
+    } catch {
+      // Non-blocking cloud registration
+    }
+  };
+
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    window.requestIdleCallback(() => { runSync().catch(() => {}); }, { timeout: 3000 });
+  } else {
+    setTimeout(() => { runSync().catch(() => {}); }, 1500);
   }
 }
 
@@ -112,7 +127,7 @@ export function registerPushServiceWorker(): void {
 
   isServiceWorkerRegistered = true;
 
-  window.addEventListener('load', () => {
+  const doRegister = () => {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
         console.log('Ataq Push Service Worker active with scope:', registration.scope);
@@ -120,7 +135,16 @@ export function registerPushServiceWorker(): void {
       .catch((error) => {
         console.warn('Push Service Worker registration notice:', error);
       });
-  });
+  };
+
+  // Run asynchronously well after the main page is interactive (1.5s delay)
+  if (document.readyState === 'complete') {
+    setTimeout(doRegister, 1500);
+  } else {
+    window.addEventListener('load', () => {
+      setTimeout(doRegister, 1500);
+    });
+  }
 
   // Listen for messages from the service worker (e.g., when user clicks a notification)
   navigator.serviceWorker.addEventListener('message', (event) => {
@@ -185,8 +209,20 @@ export async function requestAutoNotificationPermission(): Promise<NotificationP
   }
 
   try {
-    const permission = await Notification.requestPermission();
-    localStorage.setItem(PERMISSION_ASKED_KEY, 'true');
+    let permission: NotificationPermission;
+    const req = Notification.requestPermission();
+    if (req && typeof (req as Promise<NotificationPermission>).then === 'function') {
+      permission = await req;
+    } else {
+      permission = await new Promise((resolve) => {
+        Notification.requestPermission((p) => resolve(p));
+      });
+    }
+
+    try {
+      localStorage.setItem(PERMISSION_ASKED_KEY, 'true');
+    } catch {}
+
     // Ensure anonymous device token is ready
     getOrCreateAnonymousDeviceToken();
     return permission;
@@ -197,10 +233,14 @@ export async function requestAutoNotificationPermission(): Promise<NotificationP
 }
 
 export function getAutoNotificationPermission(): NotificationPermission | 'unsupported' {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
+  try {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return 'unsupported';
+    }
+    return Notification.permission;
+  } catch {
     return 'unsupported';
   }
-  return Notification.permission;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,48 +333,67 @@ export function triggerAutomaticNewProductNotification(
   playNotificationSound();
 
   // 2. Dispatch via Service Worker (Background & Terminated State)
-  if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-    navigator.serviceWorker.ready.then((reg) => {
-      // Primary: Post to service worker to handle Big Picture and action buttons
-      if (reg.active) {
-        reg.active.postMessage({
-          type: 'SHOW_NOTIFICATION',
-          payload
-        });
-      }
+  // CRITICAL: Only dispatch to SW if permission is explicitly 'granted' to prevent
+  // "Failed to execute 'showNotification' on 'ServiceWorkerRegistration': No notification permission has been granted for this origin"
+  const isNotificationGranted =
+    typeof window !== 'undefined' &&
+    'Notification' in window &&
+    Notification.permission === 'granted';
 
-      // Secondary / Direct registration showNotification if supported
-      try {
-        reg.showNotification(payload.title, {
-          body: payload.body,
-          icon: '/favicon.svg',
-          badge: '/favicon.svg',
-          image: payload.productImage || undefined, // Expanded Big Picture
-          data: {
-            url: payload.deepLinkUrl,
-            productId: payload.productId,
-            timestamp: payload.timestamp
-          },
-          tag: `ataq_product_${payload.productId}`,
-          renotify: true,
-          vibrate: [200, 100, 200, 100, 300],
-          dir: 'rtl',
-          lang: 'ar',
-          actions: [
-            { action: 'open_product', title: '🛒 تصفح واطلب الآن' },
-            { action: 'dismiss', title: 'إغلاق' }
-          ]
-        } as NotificationOptions);
-      } catch {
-        // Fallback handled below
-      }
-    }).catch(() => {
-      // Ignore worker readiness issues
-    });
+  if (isNotificationGranted && typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.ready
+      .then((reg) => {
+        // Re-verify permission before invoking
+        if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+          return;
+        }
+
+        // Primary: Post to service worker to handle Big Picture and action buttons
+        if (reg.active) {
+          reg.active.postMessage({
+            type: 'SHOW_NOTIFICATION',
+            payload
+          });
+        }
+
+        // Secondary / Direct registration showNotification if supported
+        try {
+          if (typeof reg.showNotification === 'function') {
+            reg.showNotification(payload.title, {
+              body: payload.body,
+              icon: '/favicon.svg',
+              badge: '/favicon.svg',
+              image: payload.productImage || undefined, // Expanded Big Picture
+              data: {
+                url: payload.deepLinkUrl,
+                productId: payload.productId,
+                timestamp: payload.timestamp
+              },
+              tag: `ataq_product_${payload.productId}`,
+              renotify: true,
+              vibrate: [200, 100, 200, 100, 300],
+              dir: 'rtl',
+              lang: 'ar',
+              actions: [
+                { action: 'open_product', title: '🛒 تصفح واطلب الآن' },
+                { action: 'dismiss', title: 'إغلاق' }
+              ]
+            } as NotificationOptions).catch((err) => {
+              // Gracefully handle any rejected showNotification promise
+              console.warn('Direct SW showNotification catch:', err);
+            });
+          }
+        } catch (err) {
+          console.warn('Direct SW showNotification sync error:', err);
+        }
+      })
+      .catch(() => {
+        // Ignore worker readiness issues
+      });
   }
 
   // 3. Native Browser Notification Fallback (if Service Worker is not yet ready)
-  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+  if (isNotificationGranted) {
     try {
       const nativeNotif = new Notification(payload.title, {
         body: payload.body,
@@ -506,4 +565,41 @@ export function triggerDeepLinkNavigation(productId: string): void {
   if (window.location.hash !== '#' + targetHash) {
     window.location.hash = targetHash;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. NOTIFICATION HISTORY ACCESSORS & SAMPLE TEST TRIGGER
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getNotificationHistory(): ProductNotificationPayload[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearNotificationHistory(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(NOTIFICATION_HISTORY_KEY);
+  } catch {
+    // Ignore error
+  }
+}
+
+export function sendSampleSheinNotification(): void {
+  const sampleProduct: Partial<Product> = {
+    id: 'sample_shein_' + Date.now(),
+    name: 'ساعة يد كلاسيكية فاخرة ومقاومة للماء',
+    discountPrice: 6500,
+    originalPrice: 9500,
+    isOffer: true,
+    image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop',
+    merchantName: 'متجر الصفوة - عتق'
+  };
+
+  triggerAutomaticNewProductNotification(sampleProduct as Product);
 }

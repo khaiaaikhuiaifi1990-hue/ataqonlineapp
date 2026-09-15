@@ -390,8 +390,10 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
       showToast('تم تحديث العرض بنجاح ⚡');
     } else {
       onAddProduct(product);
-      showToast('تم نشر العرض الجديد في سوق عتق بنجاح 🚀');
+      showToast('تم النشر بنجاح 🚀');
     }
+    setIsFormOpen(false);
+    setEditingProduct(null);
   };
 
   // JSON Backups
