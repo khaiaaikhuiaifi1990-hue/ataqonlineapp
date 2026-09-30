@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { CartItem, PlatformSettings } from '../types';
 import { FastImage } from './FastImage';
-import { getNextSupportPhone } from '../utils/supportRouter';
+import { getNextSupportPhone, getProductCustomerPrice, sanitizeWhatsAppPhone } from '../utils/supportRouter';
 
 interface CartModalProps {
   items: CartItem[];
@@ -31,7 +31,7 @@ export const CartModal: React.FC<CartModalProps> = ({
   onClose
 }) => {
   const totalPrice = items.reduce((sum, item) => {
-    const price = item.product.discountPrice || item.product.originalPrice;
+    const price = getProductCustomerPrice(item.product);
     return sum + price * item.quantity;
   }, 0);
 
@@ -44,7 +44,7 @@ export const CartModal: React.FC<CartModalProps> = ({
     message += `───────────────────\n`;
 
     items.forEach((item, index) => {
-      const price = item.product.discountPrice || item.product.originalPrice;
+      const price = getProductCustomerPrice(item.product);
       message += `${index + 1}. *${item.product.name}*\n`;
       message += `   - المتجر: ${item.product.merchantName}\n`;
       message += `   - الكمية: ${item.quantity}\n`;
@@ -57,7 +57,7 @@ export const CartModal: React.FC<CartModalProps> = ({
     message += `يرجى تأكيد توفر الطلب وترتيب الاستلام والتوصيل في عتق. شكراً!`;
 
     const selectedPhone = getNextSupportPhone(settings);
-    const cleanPhone = selectedPhone.replace(/[^0-9]/g, '');
+    const cleanPhone = sanitizeWhatsAppPhone(selectedPhone);
     const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   };
@@ -110,7 +110,7 @@ export const CartModal: React.FC<CartModalProps> = ({
         <div className="overflow-y-auto p-4 space-y-3 flex-1">
           {items.length > 0 ? (
             items.map((item) => {
-              const currentPrice = item.product.discountPrice || item.product.originalPrice;
+              const currentPrice = getProductCustomerPrice(item.product);
               return (
                 <div
                   key={item.product.id}

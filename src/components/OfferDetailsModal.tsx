@@ -22,12 +22,20 @@ import {
   Info,
   Camera
 } from 'lucide-react';
-import { Product } from '../types';
+import { Product, PlatformSettings } from '../types';
 import { FastImage } from './FastImage';
+import { 
+  getProductCustomerPrice, 
+  getProductOriginalPrice, 
+  resolveProductOrderPhone, 
+  sanitizeWhatsAppPhone 
+} from '../utils/supportRouter';
 
 interface OfferDetailsModalProps {
   product: Product | null;
   currency?: string;
+  profitMarginPercent?: number;
+  settings?: PlatformSettings;
   onClose: () => void;
   onAddToCart?: (product: Product) => void;
 }
@@ -35,6 +43,8 @@ interface OfferDetailsModalProps {
 export const OfferDetailsModal: React.FC<OfferDetailsModalProps> = ({
   product,
   currency = 'ريال يمني',
+  profitMarginPercent,
+  settings,
   onClose,
   onAddToCart
 }) => {
@@ -121,11 +131,12 @@ export const OfferDetailsModal: React.FC<OfferDetailsModalProps> = ({
     setZoomLevel(prev => (prev === 1 ? 1.75 : prev === 1.75 ? 2.5 : 1));
   };
 
-  const hasDiscount = product.discountPrice && product.discountPrice < product.originalPrice;
-  const currentPrice = hasDiscount ? product.discountPrice! : product.originalPrice;
-  const savings = hasDiscount ? product.originalPrice - product.discountPrice! : 0;
-  const discountPercent = hasDiscount 
-    ? Math.round(((product.originalPrice - product.discountPrice!) / product.originalPrice) * 100) 
+  const currentPrice = product ? getProductCustomerPrice(product) : 0;
+  const effectiveOriginal = product ? getProductOriginalPrice(product) : 0;
+  const hasDiscount = Boolean(product && effectiveOriginal > currentPrice);
+  const savings = hasDiscount && effectiveOriginal > currentPrice ? effectiveOriginal - currentPrice : 0;
+  const discountPercent = hasDiscount && effectiveOriginal > 0 
+    ? Math.round(((effectiveOriginal - currentPrice) / effectiveOriginal) * 100) 
     : 0;
 
   // Format offer duration to match merchant dashboard entry format (e.g. 3 أيام (72 ساعة))
@@ -165,9 +176,11 @@ export const OfferDetailsModal: React.FC<OfferDetailsModalProps> = ({
 
   const offerDurationDisplay = getOfferDurationDisplay();
 
-  // Generate Direct WhatsApp Order Link for Merchant
+  // Generate Direct WhatsApp Order Link for Merchant / Customer Service
   const getWhatsAppOrderUrl = () => {
-    const cleanPhone = (product.merchantPhone || '967770000001').replace(/[^0-9]/g, '');
+    if (!product) return '#';
+    const targetPhone = resolveProductOrderPhone(product, settings);
+    const cleanPhone = sanitizeWhatsAppPhone(targetPhone);
     const message = encodeURIComponent(
       `السلام عليكم ورحمة الله، أود الاستفسار من تطبيق عتق أونلاين:\n\n` +
       `🏷️ المنتج: ${product.name}\n` +

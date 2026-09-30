@@ -13,9 +13,11 @@ import {
 import { Product } from '../types';
 import { FastImage } from './FastImage';
 import { isProductExpired } from '../firebase';
+import { getProductCustomerPrice } from '../utils/supportRouter';
 
 interface ProductListProps {
   products: Product[];
+  profitMarginPercent?: number;
   onEdit: (product: Product) => void;
   onDelete: (id: string) => void;
   onDeleteProduct?: (product: Product) => void;
@@ -25,6 +27,7 @@ interface ProductListProps {
 
 export const ProductList: React.FC<ProductListProps> = ({
   products,
+  profitMarginPercent,
   onEdit,
   onDelete,
   onDeleteProduct,
@@ -68,8 +71,8 @@ export const ProductList: React.FC<ProductListProps> = ({
       <div className="divide-y divide-slate-100">
         {filtered.length > 0 ? (
           filtered.map((item) => {
-            const hasDiscount = item.discountPrice && item.discountPrice < item.originalPrice;
-            const currentPrice = hasDiscount ? item.discountPrice! : item.originalPrice;
+            const currentPrice = getProductCustomerPrice(item);
+            const hasDiscount = item.originalPrice > currentPrice;
             const profit = (item.costPrice && item.costPrice > 0) ? currentPrice - item.costPrice : null;
 
             return (

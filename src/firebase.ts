@@ -16,6 +16,7 @@ import {
 import { getAuth, type Auth } from 'firebase/auth';
 import { getStorage, type FirebaseStorage, ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { Product, Merchant, Review, PlatformSettings } from './types';
+import { isDummyPhone, sanitizeWhatsAppPhone, DEFAULT_REAL_SUPPORT_PHONE } from './utils/supportRouter';
 
 // Silence noisy internal SDK warning logs (e.g. offline/network retry notices)
 try {
@@ -303,7 +304,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-staff-1',
     name: 'عتق أونلاين (1)',
     ownerName: 'المندوب المعتمد (1)',
-    phone: '967770000001',
+    phone: '967733388353',
     mCode: '1',
     pin: '1111',
     location: 'عتق - المركز الرئيسي',
@@ -316,7 +317,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-staff-2',
     name: 'عتق أونلاين (2)',
     ownerName: 'المندوب المعتمد (2)',
-    phone: '967770000002',
+    phone: '967733388353',
     mCode: '2',
     pin: '2222',
     location: 'عتق - فرع الشارع العام',
@@ -329,7 +330,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-1',
     name: 'مركز عتق للتقنية والجوالات',
     ownerName: 'أبو ناصر الشبواني',
-    phone: '967770000001',
+    phone: '967733388353',
     mCode: 'M-101',
     pin: '1111',
     location: 'عتق - شارع درهم، بجانب مجمع النور',
@@ -342,7 +343,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-2',
     name: 'دار شبوة للعطور والبخور',
     ownerName: 'سالم الخليفي',
-    phone: '967770000002',
+    phone: '967733388353',
     mCode: 'M-102',
     pin: '2222',
     location: 'عتق - سوق الذهب التجاري',
@@ -355,7 +356,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-3',
     name: 'معرض شبوة للإلكترونيات والأجهزة',
     ownerName: 'محمد باراس',
-    phone: '967770000003',
+    phone: '967733388353',
     mCode: 'M-103',
     pin: '3333',
     location: 'عتق - الشارع العام، مقابل البنك المركزي',
@@ -368,7 +369,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-4',
     name: 'بوتيك الأناقة الراقية',
     ownerName: 'عبدالله الهلالي',
-    phone: '967770000004',
+    phone: '967733388353',
     mCode: 'M-104',
     pin: '4444',
     location: 'عتق - مركز المدينة بلازا',
@@ -381,7 +382,7 @@ export const INITIAL_MERCHANTS: Merchant[] = [
     id: 'merch-5',
     name: 'مناحل الخير الشبوانية',
     ownerName: 'أحمد باهدى',
-    phone: '967770000005',
+    phone: '967733388353',
     mCode: 'M-105',
     pin: '5555',
     location: 'عتق - سوق الخضار والتمور',
@@ -399,9 +400,9 @@ export const INITIAL_REVIEWS: Review[] = [];
 
 export const INITIAL_SETTINGS: PlatformSettings = {
   platformName: 'عتق أونلاين - منصة عروض شبوة',
-  supportPhone: '967770000000',
-  supportPhoneNumbers: ['967770000001', '967770000002', '967770000003'],
-  profitMarginPercent: 20,
+  supportPhone: DEFAULT_REAL_SUPPORT_PHONE,
+  supportPhoneNumbers: [DEFAULT_REAL_SUPPORT_PHONE],
+  profitMarginPercent: 0,
   merchantAccessCode: '1234',
   ownerPin: '0000',
   categories: [
@@ -588,6 +589,10 @@ export function subscribeToFirestoreProducts(
             originalPrice: Number(data.originalPrice) || 0,
             discountPrice: data.discountPrice !== undefined ? Number(data.discountPrice) : undefined,
             costPrice: data.costPrice !== undefined ? Number(data.costPrice) : undefined,
+            customerPrice: data.customerPrice !== undefined 
+              ? Number(data.customerPrice) 
+              : (data.discountPrice !== undefined ? Number(data.discountPrice) : Number(data.originalPrice) || undefined),
+            appliedMarginPercent: data.appliedMarginPercent !== undefined ? Number(data.appliedMarginPercent) : undefined,
             quantity: Number(data.quantity) >= 0 ? Number(data.quantity) : 1,
             image: typeof data.image === 'string' ? data.image : '',
             thumbnail: typeof data.thumbnail === 'string' ? data.thumbnail : '',
@@ -597,7 +602,9 @@ export function subscribeToFirestoreProducts(
             colors: data.colors ? String(data.colors) : undefined,
             merchantId: data.merchantId ? String(data.merchantId) : undefined,
             merchantName: String(data.merchantName || 'متجر عتق'),
-            merchantPhone: String(data.merchantPhone || '967770000001'),
+            merchantPhone: data.merchantPhone && !isDummyPhone(data.merchantPhone) 
+              ? sanitizeWhatsAppPhone(data.merchantPhone) 
+              : '',
             merchantLocation: String(data.merchantLocation || ''),
             isOffer: Boolean(data.isOffer),
             isFeatured: Boolean(data.isFeatured),
@@ -668,6 +675,10 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
         originalPrice: Number(data.originalPrice) || 0,
         discountPrice: data.discountPrice !== undefined ? Number(data.discountPrice) : undefined,
         costPrice: data.costPrice !== undefined ? Number(data.costPrice) : undefined,
+        customerPrice: data.customerPrice !== undefined 
+          ? Number(data.customerPrice) 
+          : (data.discountPrice !== undefined ? Number(data.discountPrice) : Number(data.originalPrice) || undefined),
+        appliedMarginPercent: data.appliedMarginPercent !== undefined ? Number(data.appliedMarginPercent) : undefined,
         quantity: Number(data.quantity) >= 0 ? Number(data.quantity) : 1,
         image: typeof data.image === 'string' ? data.image : '',
         thumbnail: typeof data.thumbnail === 'string' ? data.thumbnail : '',
@@ -677,7 +688,9 @@ export async function fetchProductsFromFirestore(): Promise<Product[]> {
         colors: data.colors ? String(data.colors) : undefined,
         merchantId: data.merchantId ? String(data.merchantId) : undefined,
         merchantName: String(data.merchantName || 'متجر عتق'),
-        merchantPhone: String(data.merchantPhone || '967770000001'),
+        merchantPhone: data.merchantPhone && !isDummyPhone(data.merchantPhone) 
+          ? sanitizeWhatsAppPhone(data.merchantPhone) 
+          : '',
         merchantLocation: String(data.merchantLocation || ''),
         isOffer: Boolean(data.isOffer),
         isFeatured: Boolean(data.isFeatured),
@@ -742,6 +755,10 @@ export function setLocalCachedProducts(products: Product[]): void {
       originalPrice: Number(p.originalPrice) || 0,
       discountPrice: p.discountPrice !== undefined ? Number(p.discountPrice) : undefined,
       costPrice: p.costPrice !== undefined ? Number(p.costPrice) : undefined,
+      customerPrice: p.customerPrice !== undefined 
+        ? Number(p.customerPrice) 
+        : (p.discountPrice !== undefined ? Number(p.discountPrice) : Number(p.originalPrice) || undefined),
+      appliedMarginPercent: p.appliedMarginPercent !== undefined ? Number(p.appliedMarginPercent) : undefined,
       quantity: Number(p.quantity) >= 0 ? Number(p.quantity) : 0,
       image: typeof p.image === 'string' ? p.image : '',
       thumbnail: typeof p.thumbnail === 'string' ? p.thumbnail : '',
@@ -751,7 +768,9 @@ export function setLocalCachedProducts(products: Product[]): void {
       colors: p.colors ? String(p.colors) : undefined,
       merchantId: p.merchantId ? String(p.merchantId) : undefined,
       merchantName: String(p.merchantName || 'متجر عتق'),
-      merchantPhone: String(p.merchantPhone || '967770000001'),
+      merchantPhone: p.merchantPhone && !isDummyPhone(p.merchantPhone) 
+        ? sanitizeWhatsAppPhone(p.merchantPhone) 
+        : '',
       merchantLocation: String(p.merchantLocation || ''),
       isOffer: Boolean(p.isOffer),
       isFeatured: Boolean(p.isFeatured),
@@ -800,16 +819,32 @@ export function getLocalCachedSettings(): PlatformSettings {
     const cached = localStorage.getItem(LOCAL_SETTINGS_KEY);
     if (cached) {
       const parsed = JSON.parse(cached);
+
+      // Sanitize and filter out dummy phone numbers from cached list
+      const rawNumbers = Array.isArray(parsed.supportPhoneNumbers) ? parsed.supportPhoneNumbers : [];
+      const sanitizedNumbers = rawNumbers
+        .filter((num: string) => num && !isDummyPhone(num))
+        .map((num: string) => sanitizeWhatsAppPhone(num))
+        .filter((num: string) => num && !isDummyPhone(num));
+
+      const cleanSupportPhone = parsed.supportPhone && !isDummyPhone(parsed.supportPhone)
+        ? sanitizeWhatsAppPhone(parsed.supportPhone)
+        : (sanitizedNumbers[0] || DEFAULT_REAL_SUPPORT_PHONE);
+
       return { 
         ...INITIAL_SETTINGS, 
         ...parsed,
-        supportPhoneNumbers: Array.isArray(parsed.supportPhoneNumbers) && parsed.supportPhoneNumbers.length > 0 
-          ? parsed.supportPhoneNumbers 
-          : INITIAL_SETTINGS.supportPhoneNumbers,
+        supportPhone: cleanSupportPhone,
+        supportPhoneNumbers: sanitizedNumbers.length > 0 
+          ? sanitizedNumbers 
+          : [cleanSupportPhone],
         categories: Array.isArray(parsed.categories) && parsed.categories.length > 0 
           ? parsed.categories 
           : INITIAL_SETTINGS.categories,
-        profitMarginPercent: typeof parsed.profitMarginPercent === 'number' ? parsed.profitMarginPercent : INITIAL_SETTINGS.profitMarginPercent,
+        // Support 0% margin explicitly - never fallback to 20 or add automatic markup if 0
+        profitMarginPercent: typeof parsed.profitMarginPercent === 'number' && !isNaN(parsed.profitMarginPercent)
+          ? Math.max(0, parsed.profitMarginPercent)
+          : 0,
         merchantAccessCode: parsed.merchantAccessCode || INITIAL_SETTINGS.merchantAccessCode,
         currency: (!parsed.currency || parsed.currency === 'ر.س' || parsed.currency === 'ريال') ? 'ريال يمني' : parsed.currency,
         autoCleanupExpired: parsed.autoCleanupExpired !== undefined ? parsed.autoCleanupExpired : INITIAL_SETTINGS.autoCleanupExpired
@@ -828,6 +863,113 @@ export function setLocalCachedSettings(settings: PlatformSettings): void {
     console.error('Error saving settings cache:', e);
   }
 }
+
+/**
+ * Persists Platform Settings (including profit margin percentage) to Firestore.
+ * Always saves 0% as a valid real profit margin (0% = Customer Price matches Merchant Price).
+ */
+export async function saveSettingsToFirestore(settings: PlatformSettings): Promise<boolean> {
+  // Update local cache immediately
+  setLocalCachedSettings(settings);
+  if (!db) return false;
+
+  try {
+    const docRef = doc(db, 'settings', 'platform');
+    const safeMargin = typeof settings.profitMarginPercent === 'number' && !isNaN(settings.profitMarginPercent)
+      ? Math.max(0, settings.profitMarginPercent)
+      : 0;
+
+    await setDoc(docRef, {
+      ...settings,
+      profitMarginPercent: safeMargin,
+      updatedAt: Date.now()
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('Firestore settings save notice (cached locally):', err);
+    return false;
+  }
+}
+
+/**
+ * Real-time listener for Platform Settings from Firestore.
+ * Ensures the customer view always reads the approved profit margin directly from Firestore.
+ */
+export function subscribeToFirestoreSettings(
+  onSettingsUpdate: (settings: PlatformSettings) => void,
+  onError?: (err: unknown) => void
+): () => void {
+  if (!db) {
+    const cached = getLocalCachedSettings();
+    onSettingsUpdate(cached);
+    return () => {};
+  }
+
+  try {
+    const docRef = doc(db, 'settings', 'platform');
+    const unsubscribe = onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const base = getLocalCachedSettings();
+          const safeMargin = typeof data.profitMarginPercent === 'number' && !isNaN(data.profitMarginPercent)
+            ? Math.max(0, data.profitMarginPercent)
+            : 0;
+
+          const rawNumbers = Array.isArray(data.supportPhoneNumbers) ? data.supportPhoneNumbers : [];
+          const sanitizedNumbers = rawNumbers
+            .filter((num: string) => num && !isDummyPhone(num))
+            .map((num: string) => sanitizeWhatsAppPhone(num))
+            .filter((num: string) => num && !isDummyPhone(num));
+
+          const cleanSupportPhone = data.supportPhone && !isDummyPhone(data.supportPhone)
+            ? sanitizeWhatsAppPhone(data.supportPhone)
+            : (sanitizedNumbers[0] || base.supportPhone || DEFAULT_REAL_SUPPORT_PHONE);
+
+          const updated: PlatformSettings = {
+            ...base,
+            ...data,
+            // CRITICAL: Strictly preserve 0% profit margin and never default to 20%
+            profitMarginPercent: safeMargin,
+            supportPhone: cleanSupportPhone,
+            supportPhoneNumbers: sanitizedNumbers.length > 0
+              ? sanitizedNumbers
+              : [cleanSupportPhone],
+            categories: Array.isArray(data.categories) && data.categories.length > 0
+              ? data.categories
+              : base.categories,
+            currency: (!data.currency || data.currency === 'ر.س' || data.currency === 'ريال') ? 'ريال يمني' : data.currency,
+          };
+          setLocalCachedSettings(updated);
+          onSettingsUpdate(updated);
+        } else {
+          // If Firestore settings document doesn't exist yet, save initial settings
+          const current = getLocalCachedSettings();
+          saveSettingsToFirestore(current).catch(() => {});
+          onSettingsUpdate(current);
+        }
+      },
+      (error: any) => {
+        if (error?.code !== 'unavailable') {
+          console.warn('Firestore settings listener fallback notice:', error);
+        }
+        onError?.(error);
+        const cached = getLocalCachedSettings();
+        onSettingsUpdate(cached);
+      }
+    );
+
+    return unsubscribe;
+  } catch (err) {
+    console.warn('Error establishing Firestore settings subscription:', err);
+    onError?.(err);
+    const cached = getLocalCachedSettings();
+    onSettingsUpdate(cached);
+    return () => {};
+  }
+}
+
 
 export function getLocalCachedReviews(): Review[] {
   try {

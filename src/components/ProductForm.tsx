@@ -29,6 +29,7 @@ import { Product, Merchant } from '../types';
 import { compressAndOptimizeImage } from '../utils/imageOptimizer';
 import { uploadImageToFirebaseStorage, UPLOAD_TIMEOUT_ERROR_MESSAGE } from '../firebase';
 import { FastImage } from './FastImage';
+import { calculateCustomerPrice, sanitizeWhatsAppPhone, isDummyPhone } from '../utils/supportRouter';
 
 interface ProductFormProps {
   initialProduct?: Product | null;
@@ -73,7 +74,7 @@ interface ImageSlot {
 export const ProductForm: React.FC<ProductFormProps> = ({
   initialProduct,
   categories: customCategories,
-  profitMarginPercent = 20,
+  profitMarginPercent,
   activeMerchant,
   onSave,
   onClose
@@ -148,7 +149,11 @@ export const ProductForm: React.FC<ProductFormProps> = ({
     initialProduct?.merchantName || activeMerchant?.name || 'عتق أونلاين (1)'
   );
   const [merchantPhone, setMerchantPhone] = useState(
-    initialProduct?.merchantPhone || activeMerchant?.phone || '967770000001'
+    initialProduct?.merchantPhone && !isDummyPhone(initialProduct.merchantPhone)
+      ? sanitizeWhatsAppPhone(initialProduct.merchantPhone)
+      : activeMerchant?.phone && !isDummyPhone(activeMerchant.phone)
+        ? sanitizeWhatsAppPhone(activeMerchant.phone)
+        : ''
   );
   const [merchantLocation, setMerchantLocation] = useState(
     initialProduct?.merchantLocation || activeMerchant?.location || 'عتق - الشارع العام'
@@ -234,10 +239,17 @@ export const ProductForm: React.FC<ProductFormProps> = ({
       return;
     }
 
-    // Automated silent background calculation using owner profit margin
-    const marginMultiplier = 1 + (profitMarginPercent || 20) / 100;
-    const finalCustomerPrice = Math.round(numCost * marginMultiplier);
-    const finalOriginalPrice = Math.round(finalCustomerPrice * 1.25);
+    // Automated background calculation using approved platform profit margin
+    // Supports 0% profit margin explicitly - never adds 20% by default!
+    const effectiveMargin = typeof profitMarginPercent === 'number' && !isNaN(profitMarginPercent)
+      ? Math.max(0, profitMarginPercent)
+      : 0;
+
+    // When margin is 0%, finalCustomerPrice matches numCost exactly (Customer Price = Merchant Price)
+    const finalCustomerPrice = calculateCustomerPrice(numCost, effectiveMargin);
+    const finalOriginalPrice = effectiveMargin > 0
+      ? Math.round(finalCustomerPrice * 1.25)
+      : finalCustomerPrice;
 
     // Determine Expiry Date & Offer Status
     const isUnlimited = durationOption === 'unlimited';
@@ -296,6 +308,8 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         description: description.trim() || `عرض مميز متوفر لدى ${merchantName} في مدينة عتق.`,
         originalPrice: finalOriginalPrice,
         discountPrice: finalCustomerPrice,
+        customerPrice: finalCustomerPrice,
+        appliedMarginPercent: effectiveMargin,
         costPrice: numCost,
         quantity: Number(quantity) || 1,
         image: uploadedPrimary,
@@ -306,7 +320,9 @@ export const ProductForm: React.FC<ProductFormProps> = ({
         colors: colors.trim() || undefined,
         merchantId: activeMerchant?.id || initialProduct?.merchantId || 'merch-staff-1',
         merchantName: merchantName.trim() || 'عتق أونلاين (1)',
-        merchantPhone: merchantPhone.trim() || '967770000001',
+        merchantPhone: merchantPhone.trim() && !isDummyPhone(merchantPhone.trim())
+          ? sanitizeWhatsAppPhone(merchantPhone.trim())
+          : (activeMerchant?.phone && !isDummyPhone(activeMerchant.phone) ? sanitizeWhatsAppPhone(activeMerchant.phone) : ''),
         merchantLocation: merchantLocation.trim() || 'عتق - الشارع العام',
         isOffer: !isUnlimited,
         offerEndsAt: expiryDate,
@@ -608,6 +624,25 @@ export const ProductForm: React.FC<ProductFormProps> = ({
                   className="w-full text-base font-black p-3.5 pr-10 rounded-2xl border border-slate-300 bg-white focus:border-rose-500 focus:ring-3 focus:ring-rose-100 outline-none"
                 />
                 <DollarSign className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 font-medium pt-1 px-1 gap-1">
+                <span>
+                  هامش الربح المعتمد:{' '}
+                  <strong className="text-slate-800 font-bold">
+                    {typeof profitMarginPercent === 'number' && !isNaN(profitMarginPercent) ? profitMarginPercent : 0}%
+                  </strong>
+                </span>
+                {numCost > 0 && (
+                  <span className="text-emerald-700 font-bold">
+                    سعر العميل النهائي:{' '}
+                    {calculateCustomerPrice(
+                      numCost,
+                      typeof profitMarginPercent === 'number' && !isNaN(profitMarginPercent) ? profitMarginPercent : 0
+                    ).toLocaleString('ar-YE')}{' '}
+                    ريال
+                  </span>
+                )}
               </div>
             </div>
           </div>

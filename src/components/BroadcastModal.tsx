@@ -12,6 +12,12 @@ import {
   Filter
 } from 'lucide-react';
 import { Product, PlatformSettings } from '../types';
+import { 
+  getProductCustomerPrice, 
+  getProductOriginalPrice, 
+  resolveProductOrderPhone, 
+  sanitizeWhatsAppPhone 
+} from '../utils/supportRouter';
 
 interface BroadcastModalProps {
   products: Product[];
@@ -48,23 +54,25 @@ export const BroadcastModal: React.FC<BroadcastModalProps> = ({
       text += `لا توجد عروض متاحة حالياً في هذا القسم.\n\n`;
     } else {
       filteredProducts.forEach((p, idx) => {
-        const hasDiscount = p.discountPrice && p.discountPrice < p.originalPrice;
-        const currentPrice = hasDiscount ? p.discountPrice! : p.originalPrice;
-        const discountPercent = hasDiscount 
-          ? Math.round(((p.originalPrice - p.discountPrice!) / p.originalPrice) * 100) 
+        const currentPrice = getProductCustomerPrice(p);
+        const effectiveOriginal = getProductOriginalPrice(p);
+        const hasDiscount = effectiveOriginal > currentPrice;
+        const discountPercent = hasDiscount && effectiveOriginal > 0 
+          ? Math.round(((effectiveOriginal - currentPrice) / effectiveOriginal) * 100) 
           : 0;
 
         text += `${idx + 1}️⃣ *${p.name}*\n`;
         text += `   🏷️ *السعر:* ${currentPrice} ${settings.currency}`;
         if (hasDiscount) {
-          text += ` ~(بدلاً من ${p.originalPrice})~ 🔥 خصم ${discountPercent}%`;
+          text += ` ~(بدلاً من ${effectiveOriginal})~ 🔥 خصم ${discountPercent}%`;
         }
         text += `\n`;
         text += `   🏪 *المتجر:* ${p.merchantName}\n`;
         if (p.merchantLocation) {
           text += `   📍 *الموقع:* ${p.merchantLocation}\n`;
         }
-        text += `   📲 *للطلب السريع:* wa.me/${(p.merchantPhone || settings.supportPhone).replace(/[^0-9]/g, '')}\n\n`;
+        const orderPhone = sanitizeWhatsAppPhone(resolveProductOrderPhone(p, settings));
+        text += `   📲 *للطلب السريع:* wa.me/${orderPhone}\n\n`;
       });
     }
 

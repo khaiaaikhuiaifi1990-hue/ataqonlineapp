@@ -14,7 +14,9 @@ import {
   saveProductToFirestore,
   deleteExpiredProductFromFirestore,
   cleanupExpiredProductsInFirestore,
-  subscribeToFirestoreProducts
+  subscribeToFirestoreProducts,
+  saveSettingsToFirestore,
+  subscribeToFirestoreSettings
 } from './firebase';
 import { Product, Merchant, Review, PlatformSettings, CartItem, ActiveView } from './types';
 import { CustomerStore } from './components/CustomerStore';
@@ -151,6 +153,24 @@ export function App() {
       (err: any) => {
         if (err?.code !== 'unavailable') {
           console.warn('Firestore products subscription notice:', err);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Real-time Firestore sync for Settings (profit margin percentage and platform configs)
+  useEffect(() => {
+    const unsubscribe = subscribeToFirestoreSettings(
+      (liveSettings) => {
+        setSettings(liveSettings);
+      },
+      (err: any) => {
+        if (err?.code !== 'unavailable') {
+          console.warn('Firestore settings subscription notice:', err);
         }
       }
     );
@@ -316,6 +336,9 @@ export function App() {
   const handleUpdateSettings = useCallback((newSettings: PlatformSettings) => {
     setSettings(newSettings);
     setLocalCachedSettings(newSettings);
+    saveSettingsToFirestore(newSettings).catch((err) => {
+      console.warn('Background Firestore settings save notice:', err);
+    });
   }, []);
 
   const handleRestoreData = useCallback(

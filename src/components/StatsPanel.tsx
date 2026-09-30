@@ -37,7 +37,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ products }) => {
       if (p.quantity <= 0) outOfStock++;
       totalViews += p.viewsCount || 0;
 
-      const salePrice = p.discountPrice || p.originalPrice;
+      const salePrice = p.customerPrice || p.discountPrice || p.originalPrice;
       const cost = p.costPrice || 0;
       if (cost > 0 && salePrice > cost) {
         totalEstimatedProfit += (salePrice - cost) * (p.quantity || 1);

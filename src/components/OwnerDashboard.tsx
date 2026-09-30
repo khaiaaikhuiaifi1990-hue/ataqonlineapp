@@ -47,7 +47,7 @@ import { StatsPanel } from './StatsPanel';
 import { ProductList } from './ProductList';
 import { ProductForm } from './ProductForm';
 import { BroadcastModal } from './BroadcastModal';
-import { calculateCustomerPrice, getNextSupportPhone } from '../utils/supportRouter';
+import { calculateCustomerPrice, getNextSupportPhone, sanitizeWhatsAppPhone, isDummyPhone, DEFAULT_REAL_SUPPORT_PHONE } from '../utils/supportRouter';
 import { isProductExpired, deleteExpiredProductFromFirestore, cleanupExpiredProductsInFirestore } from '../firebase';
 import { triggerAutomaticNewProductNotification } from '../utils/autoNotificationService';
 
@@ -146,7 +146,19 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
   const handleSaveAllSettings = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    onUpdateSettings(settingsForm);
+    const sanitizedSupport = sanitizeWhatsAppPhone(settingsForm.supportPhone);
+    const sanitizedList = (settingsForm.supportPhoneNumbers || [])
+      .filter((n) => n && !isDummyPhone(n))
+      .map((n) => sanitizeWhatsAppPhone(n))
+      .filter((n) => n && !isDummyPhone(n));
+
+    const finalSettings = {
+      ...settingsForm,
+      supportPhone: sanitizedSupport,
+      supportPhoneNumbers: sanitizedList.length > 0 ? sanitizedList : [sanitizedSupport]
+    };
+    setSettingsForm(finalSettings);
+    onUpdateSettings(finalSettings);
     showToast('تم حفظ وتطبيق الخيارات والإعدادات فورياً في السيرفر 💾');
   };
 
@@ -155,9 +167,9 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
   // ─────────────────────────────────────────────────────────────────────────────
   const handleAddSupportPhone = (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = newSupportPhone.trim().replace(/[^0-9]/g, '');
-    if (!clean || clean.length < 7) {
-      showToast('يرجى إدخال رقم واتساب صحيح يبدأ بمفتاح الدولة');
+    const clean = sanitizeWhatsAppPhone(newSupportPhone.trim());
+    if (!clean || isDummyPhone(clean)) {
+      showToast('يرجى إدخال رقم واتساب صحيح (مثال: 733388353)');
       return;
     }
 
@@ -301,7 +313,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     setEditingMerchant(null);
     setMerchantFormName('');
     setMerchantFormOwner('');
-    setMerchantFormPhone('967770000000');
+    setMerchantFormPhone(DEFAULT_REAL_SUPPORT_PHONE);
     setMerchantFormMCode(`M-${100 + merchants.length + 1}`);
     setMerchantFormPin(String(Math.floor(1000 + Math.random() * 9000)));
     setMerchantFormLocation('عتق - شارع درهم');
@@ -313,7 +325,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
     setEditingMerchant(m);
     setMerchantFormName(m.name);
     setMerchantFormOwner(m.ownerName || m.name);
-    setMerchantFormPhone(m.phone);
+    setMerchantFormPhone(sanitizeWhatsAppPhone(m.phone));
     setMerchantFormMCode(m.mCode || `M-${m.id.replace(/[^0-9]/g, '') || '101'}`);
     setMerchantFormPin(m.pin);
     setMerchantFormLocation(m.location);
@@ -328,12 +340,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
       return;
     }
 
+    const sanitizedMerchantPhone = sanitizeWhatsAppPhone(merchantFormPhone.trim());
+
     if (editingMerchant) {
       const updated: Merchant = {
         ...editingMerchant,
         name: merchantFormName.trim(),
         ownerName: merchantFormOwner.trim() || merchantFormName.trim(),
-        phone: merchantFormPhone.trim(),
+        phone: sanitizedMerchantPhone,
         mCode: merchantFormMCode.trim() || `M-${100 + merchants.length}`,
         pin: merchantFormPin.trim(),
         location: merchantFormLocation.trim(),
@@ -347,7 +361,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
         id: `merch-${Date.now()}`,
         name: merchantFormName.trim(),
         ownerName: merchantFormOwner.trim() || merchantFormName.trim(),
-        phone: merchantFormPhone.trim(),
+        phone: sanitizedMerchantPhone,
         mCode: merchantFormMCode.trim() || `M-${100 + merchants.length + 1}`,
         pin: merchantFormPin.trim(),
         location: merchantFormLocation.trim(),
@@ -1099,7 +1113,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                   <input
                     type="text"
                     required
-                    placeholder="مثال: 967770000000 (مع مفتاح الدولة)"
+                    placeholder="مثال: 733388353 أو 967733388353"
                     value={newSupportPhone}
                     onChange={(e) => setNewSupportPhone(e.target.value)}
                     className="w-full text-xs font-medium p-3 rounded-xl border border-slate-300 focus:border-emerald-500 outline-none pr-3 pl-10"
@@ -1587,6 +1601,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
 
             <ProductList
               products={products}
+              profitMarginPercent={settingsForm.profitMarginPercent}
               onEdit={handleEditProduct}
               onDelete={onDeleteProduct}
               onDeleteProduct={(prod) => setProductToDelete(prod)}
@@ -1686,6 +1701,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
         <ProductForm
           initialProduct={editingProduct}
           categories={settingsForm.categories}
+          profitMarginPercent={settingsForm.profitMarginPercent}
           onSave={handleSaveProduct}
           onClose={() => {
             setIsFormOpen(false);
@@ -1810,7 +1826,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500 font-normal">السعر:</span>
                   <span className="text-rose-600 font-black font-mono">
-                    {(productToDelete.discountPrice || productToDelete.originalPrice).toLocaleString('ar-YE')} ريال يمني
+                    {(productToDelete.customerPrice || productToDelete.discountPrice || productToDelete.originalPrice).toLocaleString('ar-YE')} ريال يمني
                   </span>
                 </div>
               </div>
@@ -1894,7 +1910,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="مثال: 967770000001"
+                  placeholder="مثال: 733388353 أو 967733388353"
                   value={merchantFormPhone}
                   onChange={(e) => setMerchantFormPhone(e.target.value)}
                   className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-300"

@@ -422,7 +422,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         required
                         value={regPhone}
                         onChange={(e) => setRegPhone(e.target.value)}
-                        placeholder="770000000"
+                        placeholder="733388353"
                         className="w-full text-xs font-bold p-3 rounded-xl border border-slate-300 bg-slate-50 outline-none"
                       />
                     </div>

@@ -5,6 +5,8 @@ export interface Product {
   description: string;
   originalPrice: number;
   discountPrice?: number;
+  customerPrice?: number; // Static frozen final customer price at time of publication
+  appliedMarginPercent?: number; // Margin percent recorded at publication time (e.g. 0% or 33%)
   costPrice?: number; // For merchant cost/profit calculation
   quantity: number;
   image: string; // Compressed optimized primary image

@@ -29,7 +29,12 @@ import { OfferDetailsModal } from './OfferDetailsModal';
 import { CartModal } from './CartModal';
 import { NotificationCenterModal } from './NotificationCenterModal';
 import { ProductSkeletonGrid } from './ProductSkeletonGrid';
-import { getNextSupportPhone } from '../utils/supportRouter';
+import { 
+  getNextSupportPhone, 
+  getProductCustomerPrice, 
+  resolveProductOrderPhone, 
+  sanitizeWhatsAppPhone 
+} from '../utils/supportRouter';
 import { isProductExpired } from '../firebase';
 import { 
   triggerPwaInstallPrompt, 
@@ -362,8 +367,9 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
 
   const handleQuickWhatsApp = useCallback((product: Product, e: React.MouseEvent) => {
     e.stopPropagation();
-    const cleanPhone = (product.merchantPhone || getNextSupportPhone(settings)).replace(/[^0-9]/g, '');
-    const currentPrice = product.discountPrice || product.originalPrice;
+    const targetPhone = resolveProductOrderPhone(product, settings);
+    const cleanPhone = sanitizeWhatsAppPhone(targetPhone);
+    const currentPrice = getProductCustomerPrice(product);
     const message = encodeURIComponent(
       `السلام عليكم ورحمة الله، أود الاستفسار من تطبيق عتق أونلاين:\n\n` +
       `🏷️ المنتج: ${product.name}\n` +
@@ -651,6 +657,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
                 key={product.id}
                 product={product}
                 currency={settings.currency || 'ريال يمني'}
+                profitMarginPercent={settings.profitMarginPercent}
                 onSelect={handleSelectProduct}
                 onQuickWhatsApp={handleQuickWhatsApp}
               />
@@ -709,6 +716,8 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
       <OfferDetailsModal
         product={selectedProduct}
         currency={settings.currency || 'ريال يمني'}
+        profitMarginPercent={settings.profitMarginPercent}
+        settings={settings}
         onClose={handleCloseProductModal}
         onAddToCart={handleAddProductToCart}
       />

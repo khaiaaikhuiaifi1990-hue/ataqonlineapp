@@ -2,10 +2,12 @@ import React from 'react';
 import { Sparkles, MessageCircle, Eye } from 'lucide-react';
 import { Product } from '../types';
 import { FastImage } from './FastImage';
+import { getProductCustomerPrice, getProductOriginalPrice } from '../utils/supportRouter';
 
 interface ProductCardProps {
   product: Product;
   currency?: string;
+  profitMarginPercent?: number;
   onSelect: (product: Product) => void;
   onQuickWhatsApp: (product: Product, e: React.MouseEvent) => void;
 }
@@ -13,13 +15,15 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = React.memo(({
   product,
   currency = 'ريال يمني',
+  profitMarginPercent,
   onSelect,
   onQuickWhatsApp
 }) => {
-  const hasDiscount = product.discountPrice && product.discountPrice < product.originalPrice;
-  const currentPrice = hasDiscount ? product.discountPrice! : product.originalPrice;
-  const discountPercent = hasDiscount 
-    ? Math.round(((product.originalPrice - product.discountPrice!) / product.originalPrice) * 100) 
+  const currentPrice = getProductCustomerPrice(product);
+  const effectiveOriginal = getProductOriginalPrice(product);
+  const hasDiscount = effectiveOriginal > currentPrice;
+  const discountPercent = hasDiscount && effectiveOriginal > 0 
+    ? Math.round(((effectiveOriginal - currentPrice) / effectiveOriginal) * 100) 
     : 0;
 
   return (
@@ -84,6 +88,11 @@ export const ProductCard: React.FC<ProductCardProps> = React.memo(({
               </span>
               <span className="text-xs font-bold text-slate-500">{currency}</span>
             </div>
+            {hasDiscount && (
+              <span className="text-[11px] text-slate-400 line-through">
+                {effectiveOriginal.toLocaleString('ar-YE')} {currency}
+              </span>
+            )}
           </div>
 
           {/* Quick WhatsApp Action Button */}

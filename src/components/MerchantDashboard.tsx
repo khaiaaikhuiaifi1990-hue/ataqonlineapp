@@ -34,6 +34,7 @@ import { ProductForm } from './ProductForm';
 import { BroadcastModal } from './BroadcastModal';
 import { FastImage } from './FastImage';
 import { isProductExpired } from '../firebase';
+import { getProductCustomerPrice } from '../utils/supportRouter';
 
 interface MerchantDashboardProps {
   merchant: Merchant;
@@ -438,8 +439,8 @@ export const MerchantDashboard: React.FC<MerchantDashboardProps> = ({
                 const now = Date.now();
                 const isExpired = item.offerEndsAt && new Date(item.offerEndsAt).getTime() < now;
                 const isHidden = item.status === 'hidden';
-                const hasDiscount = item.discountPrice && item.discountPrice < item.originalPrice;
-                const customerPrice = hasDiscount ? item.discountPrice! : item.originalPrice;
+                const customerPrice = getProductCustomerPrice(item);
+                const hasDiscount = item.originalPrice > customerPrice;
                 const cost = item.costPrice || 0;
                 const profit = cost > 0 ? customerPrice - cost : 0;
                 const totalPhotosCount = 1 + (item.additionalImages?.length || 0);

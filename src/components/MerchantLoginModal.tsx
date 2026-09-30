@@ -322,7 +322,7 @@ export const MerchantLoginModal: React.FC<MerchantLoginModalProps> = ({
                     required
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="967770000000"
+                    placeholder="733388353 أو 967733388353"
                     className="w-full text-xs font-medium p-2.5 rounded-xl border border-slate-300"
                   />
                 </div>
