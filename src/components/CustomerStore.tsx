@@ -20,14 +20,12 @@ import {
   Download,
   Smartphone,
   Share2,
-  X,
-  Bell
+  X
 } from 'lucide-react';
 import { Product, StoreCategory, CartItem, PlatformSettings, Merchant } from '../types';
 import { ProductCard } from './ProductCard';
 import { OfferDetailsModal } from './OfferDetailsModal';
 import { CartModal } from './CartModal';
-import { NotificationCenterModal } from './NotificationCenterModal';
 import { ProductSkeletonGrid } from './ProductSkeletonGrid';
 import { 
   getNextSupportPhone, 
@@ -107,7 +105,6 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
   const [isSyncingHeader, setIsSyncingHeader] = useState(false);
   const [syncHeaderDone, setSyncHeaderDone] = useState(false);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
-  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [isPwaInstalledState, setIsPwaInstalledState] = useState(() => isPwaInstalled());
   const [pwaToastMessage, setPwaToastMessage] = useState<string | null>(null);
 
@@ -438,22 +435,7 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
               <Lock className="w-5 h-5 stroke-[2.2]" />
             </button>
 
-            {/* 3. Push Notifications Center Button (SHEIN Style) */}
-            <button
-              type="button"
-              id="open-notifications-center-btn"
-              onClick={() => setIsNotificationCenterOpen(true)}
-              className="relative w-10 h-10 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200/80 text-amber-700 flex items-center justify-center shadow-xs transition-all cursor-pointer active:scale-95"
-              title="مركز الإشعارات والعروض الفورية"
-            >
-              <Bell className="w-4 h-4" />
-              <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-600" />
-              </span>
-            </button>
-
-            {/* 4. Cart Button */}
+            {/* 3. Cart Button */}
             <button
               id="open-cart-header-btn"
               onClick={handleOpenCart}
@@ -797,12 +779,6 @@ export const CustomerStore: React.FC<CustomerStoreProps> = ({
           </div>
         </div>
       )}
-
-      {/* Push Notifications Center Modal (SHEIN Style) */}
-      <NotificationCenterModal
-        isOpen={isNotificationCenterOpen}
-        onClose={() => setIsNotificationCenterOpen(false)}
-      />
     </div>
   );
 };

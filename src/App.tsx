@@ -29,7 +29,8 @@ import { AutoNotificationBanner } from './components/AutoNotificationBanner';
 import { SplashScreen } from './components/SplashScreen';
 import { 
   triggerAutomaticNewProductNotification,
-  registerPushServiceWorker
+  registerPushServiceWorker,
+  autoInitializeBackgroundPush
 } from './utils/autoNotificationService';
 import { trackDeviceOnStartup } from './utils/userTrackingService';
 
@@ -156,6 +157,7 @@ export function App() {
     const runBackgroundBootstrap = () => {
       trackDeviceOnStartup().catch(() => {});
       registerPushServiceWorker();
+      autoInitializeBackgroundPush();
     };
 
     // Defer until after splash screen has cleared (> 800ms)

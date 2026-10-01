@@ -80,7 +80,7 @@ export function getOrCreateAnonymousDeviceToken(): string {
   }
 }
 
-async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<void> {
+export async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<void> {
   if (!db || !token) return;
 
   const runSync = async () => {
@@ -98,6 +98,7 @@ async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<
           lastSeenAt: Date.now(),
           platform: 'web',
           isAnonymous: true,
+          notificationPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
           userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.substring(0, 120) : 'unknown'
         }, { merge: true }),
         timeoutPromise
@@ -111,6 +112,66 @@ async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<
     window.requestIdleCallback(() => { runSync().catch(() => {}); }, { timeout: 3000 });
   } else {
     setTimeout(() => { runSync().catch(() => {}); }, 1500);
+  }
+}
+
+/**
+ * Automatically initializes background notifications:
+ * - Registers Service Worker
+ * - Subscribes device to topics/ataq_all_devices
+ * - Syncs token to cloud
+ * - Silently requests notification permission on launch / first gesture (Zero UI buttons)
+ */
+export function autoInitializeBackgroundPush(): void {
+  if (typeof window === 'undefined') return;
+
+  // 1. Ensure anonymous device token is generated and auto-subscribed to topics/ataq_all_devices
+  const token = getOrCreateAnonymousDeviceToken();
+  const topics = [GLOBAL_PUSH_TOPIC, 'topics/new_products', 'topics/flash_offers'];
+  try {
+    localStorage.setItem(SUBSCRIBED_TOPICS_KEY, JSON.stringify(topics));
+  } catch {}
+
+  // 2. Register Service Worker in the background
+  registerPushServiceWorker();
+
+  // 3. Sync to Cloud
+  syncDeviceTokenToCloud(token, topics);
+
+  // 4. Request system notification permission automatically without any in-app button
+  if ('Notification' in window) {
+    if (Notification.permission === 'default') {
+      const handleSilentRequest = () => {
+        try {
+          const req = Notification.requestPermission();
+          if (req && typeof (req as Promise<NotificationPermission>).then === 'function') {
+            req.then((perm) => {
+              if (perm === 'granted') {
+                syncDeviceTokenToCloud(token, topics);
+              }
+            }).catch(() => {});
+          } else {
+            Notification.requestPermission((perm) => {
+              if (perm === 'granted') {
+                syncDeviceTokenToCloud(token, topics);
+              }
+            });
+          }
+        } catch {}
+      };
+
+      // Attempt after app starts (1.2s delay)
+      setTimeout(handleSilentRequest, 1200);
+
+      // Also trigger on first gesture (click or tap) if browser enforces user gesture
+      const onUserGesture = () => {
+        handleSilentRequest();
+        window.removeEventListener('click', onUserGesture);
+        window.removeEventListener('touchstart', onUserGesture);
+      };
+      window.addEventListener('click', onUserGesture, { once: true });
+      window.addEventListener('touchstart', onUserGesture, { once: true });
+    }
   }
 }
 
@@ -295,55 +356,23 @@ export function generateSheinNotificationCopy(product: Partial<Product>): {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. DISPATCH AUTOMATIC NOTIFICATION (Broadcast, Push, Big Picture, Deep Link)
+// 6. DISPATCH EXTERNAL SYSTEM NOTIFICATION (Service Worker, Native OS & Audio)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function triggerAutomaticNewProductNotification(
-  input: Product | { name: string; image?: string; price?: number; id?: string; merchantName?: string; originalPrice?: number; isOffer?: boolean }
-): void {
-  const productId = input.id || 'prod_' + Date.now();
-  const productName = input.name || 'منتج جديد';
-  const productImage = input.image;
-  const rawInputPrice = (input as { price?: number }).price;
-  const productPrice = rawInputPrice ?? (input as Product).discountPrice ?? input.originalPrice ?? 0;
-  const originalPrice = input.originalPrice;
-  const merchantName = input.merchantName || 'عتق أونلاين';
-  const deepLinkUrl = `/?productId=${productId}#product-${productId}`;
-
-  const { title, body, discountPercent } = generateSheinNotificationCopy(input as Product);
-
-  const payload: ProductNotificationPayload = {
-    id: 'push_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-    productId,
-    title,
-    body,
-    productName,
-    productPrice,
-    originalPrice,
-    discountPercent,
-    productImage,
-    merchantName,
-    timestamp: Date.now(),
-    deepLinkUrl,
-    fcmTopic: GLOBAL_PUSH_TOPIC,
-    fcmDeviceToken: getOrCreateAnonymousDeviceToken()
-  };
+export function dispatchExternalSystemNotification(payload: ProductNotificationPayload): void {
+  if (typeof window === 'undefined') return;
 
   // 1. Play soft audio chime locally
   playNotificationSound();
 
   // 2. Dispatch via Service Worker (Background & Terminated State)
-  // CRITICAL: Only dispatch to SW if permission is explicitly 'granted' to prevent
-  // "Failed to execute 'showNotification' on 'ServiceWorkerRegistration': No notification permission has been granted for this origin"
   const isNotificationGranted =
-    typeof window !== 'undefined' &&
     'Notification' in window &&
     Notification.permission === 'granted';
 
-  if (isNotificationGranted && typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  if (isNotificationGranted && 'serviceWorker' in navigator) {
     navigator.serviceWorker.ready
       .then((reg) => {
-        // Re-verify permission before invoking
         if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
           return;
         }
@@ -379,7 +408,6 @@ export function triggerAutomaticNewProductNotification(
                 { action: 'dismiss', title: 'إغلاق' }
               ]
             } as NotificationOptions).catch((err) => {
-              // Gracefully handle any rejected showNotification promise
               console.warn('Direct SW showNotification catch:', err);
             });
           }
@@ -387,13 +415,9 @@ export function triggerAutomaticNewProductNotification(
           console.warn('Direct SW showNotification sync error:', err);
         }
       })
-      .catch(() => {
-        // Ignore worker readiness issues
-      });
-  }
-
-  // 3. Native Browser Notification Fallback (if Service Worker is not yet ready)
-  if (isNotificationGranted) {
+      .catch(() => {});
+  } else if (isNotificationGranted) {
+    // 3. Native Browser Notification Fallback (if Service Worker is not yet ready)
     try {
       const nativeNotif = new Notification(payload.title, {
         body: payload.body,
@@ -426,11 +450,44 @@ export function triggerAutomaticNewProductNotification(
     const updated = [payload, ...history].slice(0, 30);
     localStorage.setItem(NOTIFICATION_HISTORY_KEY, JSON.stringify(updated));
     localStorage.setItem('ataq_latest_auto_notif_v2', JSON.stringify(payload));
-  } catch {
-    // Ignore storage issues
-  }
+  } catch {}
+}
 
-  // 5. Broadcast across open tabs/devices in real-time
+export function triggerAutomaticNewProductNotification(
+  input: Product | { name: string; image?: string; price?: number; id?: string; merchantName?: string; originalPrice?: number; isOffer?: boolean }
+): void {
+  const productId = input.id || 'prod_' + Date.now();
+  const productName = input.name || 'منتج جديد';
+  const productImage = input.image;
+  const rawInputPrice = (input as { price?: number }).price;
+  const productPrice = rawInputPrice ?? (input as Product).discountPrice ?? input.originalPrice ?? 0;
+  const originalPrice = input.originalPrice;
+  const merchantName = input.merchantName || 'عتق أونلاين';
+  const deepLinkUrl = `/?productId=${productId}#product-${productId}`;
+
+  const { title, body, discountPercent } = generateSheinNotificationCopy(input as Product);
+
+  const payload: ProductNotificationPayload = {
+    id: 'push_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    productId,
+    title,
+    body,
+    productName,
+    productPrice,
+    originalPrice,
+    discountPercent,
+    productImage,
+    merchantName,
+    timestamp: Date.now(),
+    deepLinkUrl,
+    fcmTopic: GLOBAL_PUSH_TOPIC,
+    fcmDeviceToken: getOrCreateAnonymousDeviceToken()
+  };
+
+  // 1. Dispatch external system notification directly
+  dispatchExternalSystemNotification(payload);
+
+  // 2. Broadcast across open tabs/devices in real-time
   try {
     if (broadcastChannel) {
       broadcastChannel.postMessage(payload);
@@ -439,7 +496,7 @@ export function triggerAutomaticNewProductNotification(
     console.warn('BroadcastChannel send error:', e);
   }
 
-  // 6. Broadcast across clients via Firestore collection if connected
+  // 3. Broadcast across clients via Firestore collection if connected
   if (db) {
     try {
       const notifDocRef = doc(collection(db, 'push_notifications'));
@@ -453,7 +510,7 @@ export function triggerAutomaticNewProductNotification(
     }
   }
 
-  // 7. Fire window CustomEvent for active in-app listener
+  // 4. Fire window CustomEvent for active in-app listener
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('ataq_new_product_notif', { detail: payload }));
   }
@@ -479,8 +536,12 @@ export function subscribeToAutoNotifications(
 
   const handleBroadcastMessage = (event: MessageEvent) => {
     if (event.data && event.data.title && event.data.productName) {
-      playNotificationSound();
-      callback(event.data as ProductNotificationPayload);
+      const payload = event.data as ProductNotificationPayload;
+      const myToken = getOrCreateAnonymousDeviceToken();
+      if (payload.fcmDeviceToken !== myToken) {
+        dispatchExternalSystemNotification(payload);
+      }
+      callback(payload);
     }
   };
 
@@ -488,7 +549,10 @@ export function subscribeToAutoNotifications(
     if (e.key === 'ataq_latest_auto_notif_v2' && e.newValue) {
       try {
         const payload = JSON.parse(e.newValue);
-        playNotificationSound();
+        const myToken = getOrCreateAnonymousDeviceToken();
+        if (payload.fcmDeviceToken !== myToken) {
+          dispatchExternalSystemNotification(payload);
+        }
         callback(payload);
       } catch {
         // Ignore parse error
@@ -521,7 +585,10 @@ export function subscribeToAutoNotifications(
             const data = change.doc.data() as ProductNotificationPayload & { createdAt?: number };
             // Only trigger if published after this client session started
             if (data && data.createdAt && data.createdAt > startupTime) {
-              playNotificationSound();
+              const myToken = getOrCreateAnonymousDeviceToken();
+              if (data.fcmDeviceToken !== myToken) {
+                dispatchExternalSystemNotification(data);
+              }
               callback(data);
             }
           }

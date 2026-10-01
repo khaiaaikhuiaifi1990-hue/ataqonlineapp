@@ -18,6 +18,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { Merchant, PlatformSettings } from '../types';
+import { sanitizeWhatsAppPhone } from '../utils/supportRouter';
 
 interface AdminPortalProps {
   merchants: Merchant[];
@@ -128,7 +129,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       id: `merch-${Date.now()}`,
       name: regStoreName.trim(),
       ownerName: regOwnerName.trim() || regStoreName.trim(),
-      phone: regPhone.trim(),
+      phone: sanitizeWhatsAppPhone(regPhone.trim()),
       mCode: generatedCode,
       pin: regPin.trim(),
       location: regLocation.trim() || 'عتق',
