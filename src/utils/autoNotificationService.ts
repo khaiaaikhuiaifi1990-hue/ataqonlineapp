@@ -19,8 +19,18 @@ import { collection, doc, setDoc, onSnapshot, query, orderBy, limit } from 'fire
 export interface FCMNotificationSection {
   title: string;
   body: string;
-  icon: string;
+  icon?: string;
   image?: string;
+}
+
+export interface FCMWebpushSection {
+  headers: {
+    TTL: string;
+    Urgency?: string;
+  };
+  fcm_options: {
+    link: string;
+  };
 }
 
 export interface FCMDataSection {
@@ -59,6 +69,7 @@ export interface ProductNotificationPayload {
 
   // Direct FCM sections for background Android / Web OS notification display
   notification?: FCMNotificationSection;
+  webpush?: FCMWebpushSection;
   data?: FCMDataSection;
 }
 
@@ -111,35 +122,27 @@ export function getOrCreateAnonymousDeviceToken(): string {
 export async function syncDeviceTokenToCloud(token: string, topics: string[]): Promise<void> {
   if (!db || !token) return;
 
-  const runSync = async () => {
-    try {
-      const tokenDocRef = doc(db!, 'device_tokens', token);
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Token sync timeout')), 2000)
-      );
+  try {
+    const tokenDocRef = doc(db, 'device_tokens', token);
+    const topicSubDocRef = doc(db, 'topic_subscriptions', 'ataq_all_devices', 'subscribers', token);
 
-      await Promise.race([
-        setDoc(tokenDocRef, {
-          fcmDeviceToken: token,
-          subscribedTopics: topics,
-          registeredAt: Date.now(),
-          lastSeenAt: Date.now(),
-          platform: 'web',
-          isAnonymous: true,
-          notificationPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.substring(0, 120) : 'unknown'
-        }, { merge: true }),
-        timeoutPromise
-      ]);
-    } catch {
-      // Non-blocking cloud registration
-    }
-  };
+    const deviceData = {
+      fcmDeviceToken: token,
+      subscribedTopics: topics,
+      registeredAt: Date.now(),
+      lastSeenAt: Date.now(),
+      platform: 'web',
+      isAnonymous: true,
+      notificationPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.substring(0, 120) : 'unknown'
+    };
 
-  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-    window.requestIdleCallback(() => { runSync().catch(() => {}); }, { timeout: 3000 });
-  } else {
-    setTimeout(() => { runSync().catch(() => {}); }, 1500);
+    await Promise.all([
+      setDoc(tokenDocRef, deviceData, { merge: true }),
+      setDoc(topicSubDocRef, deviceData, { merge: true })
+    ]);
+  } catch (err) {
+    console.warn('Device token cloud sync note:', err);
   }
 }
 
@@ -166,39 +169,41 @@ export function autoInitializeBackgroundPush(): void {
   // 3. Sync to Cloud
   syncDeviceTokenToCloud(token, topics);
 
-  // 4. Request system notification permission automatically without any in-app button
+  // 4. Request system notification permission immediately upon opening the app
   if ('Notification' in window) {
-    if (Notification.permission === 'default') {
-      const handleSilentRequest = () => {
-        try {
-          const req = Notification.requestPermission();
-          if (req && typeof (req as Promise<NotificationPermission>).then === 'function') {
-            req.then((perm) => {
-              if (perm === 'granted') {
-                syncDeviceTokenToCloud(token, topics);
-              }
-            }).catch(() => {});
-          } else {
-            Notification.requestPermission((perm) => {
-              if (perm === 'granted') {
-                syncDeviceTokenToCloud(token, topics);
-              }
-            });
-          }
-        } catch {}
-      };
+    const handleImmediateRequest = () => {
+      try {
+        const req = Notification.requestPermission();
+        if (req && typeof (req as Promise<NotificationPermission>).then === 'function') {
+          req.then((perm) => {
+            if (perm === 'granted') {
+              syncDeviceTokenToCloud(token, topics);
+            }
+          }).catch(() => {});
+        } else {
+          Notification.requestPermission((perm) => {
+            if (perm === 'granted') {
+              syncDeviceTokenToCloud(token, topics);
+            }
+          });
+        }
+      } catch {}
+    };
 
-      // Attempt after app starts (1.2s delay)
-      setTimeout(handleSilentRequest, 1200);
+    if (Notification.permission === 'default') {
+      // Trigger request immediately upon opening the app
+      handleImmediateRequest();
 
       // Also trigger on first gesture (click or tap) if browser enforces user gesture
       const onUserGesture = () => {
-        handleSilentRequest();
+        handleImmediateRequest();
         window.removeEventListener('click', onUserGesture);
         window.removeEventListener('touchstart', onUserGesture);
       };
       window.addEventListener('click', onUserGesture, { once: true });
       window.addEventListener('touchstart', onUserGesture, { once: true });
+    } else if (Notification.permission === 'granted') {
+      syncDeviceTokenToCloud(token, topics);
     }
   }
 }
@@ -224,18 +229,12 @@ export function registerPushServiceWorker(): void {
       })
       .catch((error) => {
         console.warn('FCM Service Worker registration fallback to /sw.js:', error);
-        navigator.serviceWorker.register('/sw.js').catch(() => {});
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
       });
   };
 
-  // Run asynchronously well after the main page is interactive (1.5s delay)
-  if (document.readyState === 'complete') {
-    setTimeout(doRegister, 1500);
-  } else {
-    window.addEventListener('load', () => {
-      setTimeout(doRegister, 1500);
-    });
-  }
+  // Run immediately upon app launch
+  doRegister();
 
   // Listen for messages from the service worker (e.g., when user clicks a notification)
   navigator.serviceWorker.addEventListener('message', (event) => {
@@ -405,7 +404,7 @@ export function dispatchExternalSystemNotification(payload: ProductNotificationP
   const icon = payload.notification?.icon || '/favicon.svg';
   const image = payload.notification?.image || payload.productImage;
   const productId = payload.data?.productId || payload.productId;
-  const deepLinkUrl = payload.data?.url || payload.data?.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+  const deepLinkUrl = payload.webpush?.fcm_options?.link || payload.data?.url || payload.data?.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
 
   if (isNotificationGranted && 'serviceWorker' in navigator) {
     navigator.serviceWorker.ready
@@ -509,15 +508,29 @@ export function triggerAutomaticNewProductNotification(
   const notificationId = 'push_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
   const deviceToken = getOrCreateAnonymousDeviceToken();
 
+  const linkUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/?productId=${productId}#product-${productId}`
+    : deepLinkUrl;
+
   // 1. Direct FCM Notification Object (Recognized natively by Android & Web push notification service)
   const notificationPayload: FCMNotificationSection = {
     title,
     body,
     icon: '/favicon.svg',
-    ...(productImage ? { image: productImage } : {})
+    image: productImage || '/favicon.svg'
   };
 
-  // 2. Direct FCM Data Object (Carries all metadata, deep link & identifiers)
+  // 2. Direct FCM Webpush Object (Mobile screen webpush headers & deep linking)
+  const webpushPayload: FCMWebpushSection = {
+    headers: {
+      TTL: "86400"
+    },
+    fcm_options: {
+      link: linkUrl
+    }
+  };
+
+  // 3. Direct FCM Data Object (Carries all metadata, deep link & identifiers)
   const dataPayload: FCMDataSection = {
     id: notificationId,
     productId,
@@ -529,7 +542,7 @@ export function triggerAutomaticNewProductNotification(
     merchantName,
     category,
     deepLinkUrl,
-    url: deepLinkUrl,
+    url: linkUrl,
     fcmTopic: GLOBAL_PUSH_TOPIC,
     fcmDeviceToken: deviceToken,
     timestamp: String(Date.now())
@@ -552,6 +565,7 @@ export function triggerAutomaticNewProductNotification(
     fcmTopic: GLOBAL_PUSH_TOPIC,
     fcmDeviceToken: deviceToken,
     notification: notificationPayload,
+    webpush: webpushPayload,
     data: dataPayload
   };
 
@@ -567,7 +581,7 @@ export function triggerAutomaticNewProductNotification(
     console.warn('BroadcastChannel send error:', e);
   }
 
-  // 3. Broadcast across clients via Firestore collection with explicit notification & data envelope
+  // 3. Broadcast across clients via Firestore collection with explicit notification, webpush & data envelope
   if (db) {
     try {
       const notifDocRef = doc(collection(db, 'push_notifications'));
@@ -576,7 +590,15 @@ export function triggerAutomaticNewProductNotification(
         createdAt: Date.now(),
         topic: GLOBAL_PUSH_TOPIC,
         // Standard FCM envelope for Android / Web push background delivery
-        notification: notificationPayload,
+        notification: {
+          title,
+          body,
+          image: productImage || '/favicon.svg'
+        },
+        webpush: {
+          headers: { TTL: "86400" },
+          fcm_options: { link: linkUrl }
+        },
         data: dataPayload
       }).catch(() => {});
     } catch {

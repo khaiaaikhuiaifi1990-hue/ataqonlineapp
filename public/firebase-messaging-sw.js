@@ -1,6 +1,6 @@
 // Ataq Online - Firebase Cloud Messaging (FCM) Background Service Worker
-// Handles background push notifications when the app is closed or terminated
-// Compatible with Firebase v10, Android Web Push, PWA & modern browsers
+// Handles background push notifications when the app is closed or in background
+// Compatible with Firebase v10, Android Web Push, PWA & modern mobile browsers
 
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-compat.js');
@@ -18,7 +18,7 @@ const firebaseConfig = {
 // Initialize Firebase in Service Worker
 try {
   if (typeof firebase !== 'undefined' && firebase.initializeApp) {
-    if (!firebase.apps.length) {
+    if (!firebase.apps || !firebase.apps.length) {
       firebase.initializeApp(firebaseConfig);
     }
   }
@@ -26,19 +26,12 @@ try {
   console.warn('[firebase-messaging-sw.js] Firebase init notice:', e);
 }
 
-// 2. Safe notification helper
-function safeShowNotification(title, options) {
-  try {
-    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-      return Promise.resolve();
-    }
-    if (self.registration && typeof self.registration.showNotification === 'function') {
-      return self.registration.showNotification(title, options).catch((err) => {
-        console.warn('[firebase-messaging-sw.js] showNotification error:', err);
-      });
-    }
-  } catch (err) {
-    console.warn('[firebase-messaging-sw.js] safeShowNotification notice:', err);
+// 2. Direct showNotification runner
+function triggerShowNotification(title, options) {
+  if (self.registration && typeof self.registration.showNotification === 'function') {
+    return self.registration.showNotification(title, options).catch((err) => {
+      console.warn('[firebase-messaging-sw.js] self.registration.showNotification error:', err);
+    });
   }
   return Promise.resolve();
 }
@@ -49,27 +42,30 @@ try {
     const messaging = firebase.messaging();
 
     messaging.onBackgroundMessage((payload) => {
-      console.log('[firebase-messaging-sw.js] Received onBackgroundMessage:', payload);
+      console.log('[firebase-messaging-sw.js] onBackgroundMessage received:', payload);
 
       const notif = payload.notification || {};
       const data = payload.data || {};
+      const webpush = payload.webpush || {};
+      const fcmOptions = webpush.fcm_options || payload.fcm_options || {};
 
       const title = notif.title || data.title || payload.title || '🔥 عرض جديد في عتق أونلاين!';
       const body = notif.body || data.body || payload.body || 'تصفح أحدث العروض والمنتجات الحصرية الآن 🛍️';
       const icon = notif.icon || data.icon || payload.icon || '/favicon.svg';
       const image = notif.image || data.image || data.productImage || payload.image;
       const productId = data.productId || payload.productId || '';
-      const deepLinkUrl = data.url || data.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+      const deepLinkUrl = fcmOptions.link || data.url || data.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
 
       const notificationOptions = {
         body: body,
         icon: icon,
         badge: '/favicon.svg',
-        image: image || undefined, // Big Picture for expanded notification on Android/Desktop
+        image: image || undefined, // Big Picture for expanded view in Android status bar & lockscreen
         data: {
           url: deepLinkUrl,
           productId: productId,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          link: deepLinkUrl
         },
         tag: productId ? `ataq_product_${productId}` : 'ataq_bg_fcm',
         renotify: true,
@@ -82,7 +78,8 @@ try {
         ]
       };
 
-      return safeShowNotification(title, notificationOptions);
+      // Directly use self.registration.showNotification as required
+      return self.registration.showNotification(title, notificationOptions);
     });
   }
 } catch (err) {
@@ -107,13 +104,15 @@ self.addEventListener('push', (event) => {
 
   const notif = payload.notification || {};
   const data = payload.data || {};
+  const webpush = payload.webpush || {};
+  const fcmOptions = webpush.fcm_options || payload.fcm_options || {};
 
   const title = notif.title || data.title || payload.title || '🔥 وصل منتج جديد الآن!';
   const body = notif.body || data.body || payload.body || 'تصفح أحدث العروض الحصرية في عتق أونلاين 🛍️';
   const icon = notif.icon || data.icon || payload.icon || '/favicon.svg';
   const image = notif.image || data.image || payload.image || data.productImage || payload.productImage;
   const productId = data.productId || payload.productId || '';
-  const deepLinkUrl = data.url || data.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+  const deepLinkUrl = fcmOptions.link || data.url || data.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
 
   const options = {
     body: body,
@@ -123,7 +122,8 @@ self.addEventListener('push', (event) => {
     data: {
       url: deepLinkUrl,
       productId: productId,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      link: deepLinkUrl
     },
     tag: productId ? `ataq_product_${productId}` : 'ataq_native_push',
     renotify: true,
@@ -137,7 +137,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    safeShowNotification(title, options)
+    triggerShowNotification(title, options)
   );
 });
 
@@ -149,12 +149,14 @@ self.addEventListener('message', (event) => {
     const p = event.data.payload;
     const notif = p.notification || {};
     const data = p.data || {};
+    const webpush = p.webpush || {};
+    const fcmOptions = webpush.fcm_options || {};
 
     const title = notif.title || data.title || p.title || '🔥 وصل منتج جديد الآن!';
     const body = notif.body || data.body || p.body || 'تصفح أحدث العروض والمنتجات الحصرية 🛍️';
     const image = notif.image || data.image || p.productImage || p.image;
     const productId = data.productId || p.productId || '';
-    const deepLinkUrl = data.url || data.deepLinkUrl || p.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+    const deepLinkUrl = fcmOptions.link || data.url || data.deepLinkUrl || p.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
 
     const options = {
       body: body,
@@ -164,7 +166,8 @@ self.addEventListener('message', (event) => {
       data: {
         url: deepLinkUrl,
         productId: productId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        link: deepLinkUrl
       },
       tag: productId ? `ataq_product_${productId}` : 'ataq_local_push',
       renotify: true,
@@ -178,7 +181,7 @@ self.addEventListener('message', (event) => {
     };
 
     event.waitUntil(
-      safeShowNotification(title, options)
+      triggerShowNotification(title, options)
     );
   }
 });
@@ -192,7 +195,7 @@ self.addEventListener('notificationclick', (event) => {
   }
 
   const notificationData = event.notification.data || {};
-  const targetUrl = notificationData.url || '/';
+  const targetUrl = notificationData.link || notificationData.url || '/';
   const targetProductId = notificationData.productId;
 
   event.waitUntil(

@@ -151,16 +151,18 @@ export function App() {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // Non-blocking background initialization: run device tracking & SW registration
-  // strictly in the background after main store and cached products are rendered
+  // Request notification permission and register FCM background service worker immediately upon app opening
+  useEffect(() => {
+    autoInitializeBackgroundPush();
+  }, []);
+
+  // Non-blocking background initialization: run device tracking strictly in background
   useEffect(() => {
     const runBackgroundBootstrap = () => {
       trackDeviceOnStartup().catch(() => {});
-      registerPushServiceWorker();
-      autoInitializeBackgroundPush();
     };
 
-    // Defer until after splash screen has cleared (> 800ms)
+    // Defer device tracking until after initial render
     const timer = setTimeout(runBackgroundBootstrap, 1200);
     return () => clearTimeout(timer);
   }, []);
