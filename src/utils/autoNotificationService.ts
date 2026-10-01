@@ -16,6 +16,30 @@ import { Product } from '../types';
 import { db } from '../firebase';
 import { collection, doc, setDoc, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 
+export interface FCMNotificationSection {
+  title: string;
+  body: string;
+  icon: string;
+  image?: string;
+}
+
+export interface FCMDataSection {
+  id: string;
+  productId: string;
+  productName: string;
+  productPrice: string;
+  originalPrice: string;
+  discountPercent: string;
+  productImage: string;
+  merchantName: string;
+  category: string;
+  deepLinkUrl: string;
+  url: string;
+  fcmTopic: string;
+  fcmDeviceToken: string;
+  timestamp: string;
+}
+
 export interface ProductNotificationPayload {
   id: string;
   productId: string;
@@ -32,6 +56,10 @@ export interface ProductNotificationPayload {
   deepLinkUrl: string;
   fcmTopic?: string;
   fcmDeviceToken?: string;
+
+  // Direct FCM sections for background Android / Web OS notification display
+  notification?: FCMNotificationSection;
+  data?: FCMDataSection;
 }
 
 const BROADCAST_CHANNEL_NAME = 'ataq_auto_notifications_channel_v2';
@@ -189,12 +217,14 @@ export function registerPushServiceWorker(): void {
   isServiceWorkerRegistered = true;
 
   const doRegister = () => {
-    navigator.serviceWorker.register('/sw.js')
+    // Primary: Register official Firebase Cloud Messaging background worker
+    navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' })
       .then((registration) => {
-        console.log('Ataq Push Service Worker active with scope:', registration.scope);
+        console.log('Ataq FCM Background Service Worker active with scope:', registration.scope);
       })
       .catch((error) => {
-        console.warn('Push Service Worker registration notice:', error);
+        console.warn('FCM Service Worker registration fallback to /sw.js:', error);
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
       });
   };
 
@@ -370,6 +400,13 @@ export function dispatchExternalSystemNotification(payload: ProductNotificationP
     'Notification' in window &&
     Notification.permission === 'granted';
 
+  const title = payload.notification?.title || payload.title || '🔥 عرض جديد في عتق أونلاين!';
+  const body = payload.notification?.body || payload.body || 'تصفح أحدث العروض والمنتجات الحصرية الآن 🛍️';
+  const icon = payload.notification?.icon || '/favicon.svg';
+  const image = payload.notification?.image || payload.productImage;
+  const productId = payload.data?.productId || payload.productId;
+  const deepLinkUrl = payload.data?.url || payload.data?.deepLinkUrl || payload.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+
   if (isNotificationGranted && 'serviceWorker' in navigator) {
     navigator.serviceWorker.ready
       .then((reg) => {
@@ -388,17 +425,17 @@ export function dispatchExternalSystemNotification(payload: ProductNotificationP
         // Secondary / Direct registration showNotification if supported
         try {
           if (typeof reg.showNotification === 'function') {
-            reg.showNotification(payload.title, {
-              body: payload.body,
-              icon: '/favicon.svg',
+            reg.showNotification(title, {
+              body,
+              icon,
               badge: '/favicon.svg',
-              image: payload.productImage || undefined, // Expanded Big Picture
+              image: image || undefined, // Expanded Big Picture
               data: {
-                url: payload.deepLinkUrl,
-                productId: payload.productId,
-                timestamp: payload.timestamp
+                url: deepLinkUrl,
+                productId,
+                timestamp: payload.timestamp || Date.now()
               },
-              tag: `ataq_product_${payload.productId}`,
+              tag: productId ? `ataq_product_${productId}` : 'ataq_product_push',
               renotify: true,
               vibrate: [200, 100, 200, 100, 300],
               dir: 'rtl',
@@ -419,23 +456,25 @@ export function dispatchExternalSystemNotification(payload: ProductNotificationP
   } else if (isNotificationGranted) {
     // 3. Native Browser Notification Fallback (if Service Worker is not yet ready)
     try {
-      const nativeNotif = new Notification(payload.title, {
-        body: payload.body,
-        icon: '/favicon.svg',
+      const nativeNotif = new Notification(title, {
+        body,
+        icon,
         badge: '/favicon.svg',
         data: {
-          url: payload.deepLinkUrl,
-          productId: payload.productId
+          url: deepLinkUrl,
+          productId
         },
-        tag: `ataq_prod_${payload.productId}`,
+        tag: `ataq_prod_${productId}`,
         dir: 'rtl',
         lang: 'ar',
-        ...(payload.productImage ? { image: payload.productImage } : {})
+        ...(image ? { image } : {})
       } as NotificationOptions);
 
       nativeNotif.onclick = () => {
         window.focus();
-        triggerDeepLinkNavigation(payload.productId);
+        if (productId) {
+          triggerDeepLinkNavigation(productId);
+        }
         nativeNotif.close();
       };
     } catch (e) {
@@ -454,21 +493,50 @@ export function dispatchExternalSystemNotification(payload: ProductNotificationP
 }
 
 export function triggerAutomaticNewProductNotification(
-  input: Product | { name: string; image?: string; price?: number; id?: string; merchantName?: string; originalPrice?: number; isOffer?: boolean }
+  input: Product | { name: string; image?: string; price?: number; id?: string; merchantName?: string; originalPrice?: number; isOffer?: boolean; category?: string }
 ): void {
   const productId = input.id || 'prod_' + Date.now();
   const productName = input.name || 'منتج جديد';
-  const productImage = input.image;
+  const productImage = input.image || '';
   const rawInputPrice = (input as { price?: number }).price;
   const productPrice = rawInputPrice ?? (input as Product).discountPrice ?? input.originalPrice ?? 0;
   const originalPrice = input.originalPrice;
   const merchantName = input.merchantName || 'عتق أونلاين';
+  const category = (input as Product).category || 'عروض عتق';
   const deepLinkUrl = `/?productId=${productId}#product-${productId}`;
 
   const { title, body, discountPercent } = generateSheinNotificationCopy(input as Product);
+  const notificationId = 'push_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+  const deviceToken = getOrCreateAnonymousDeviceToken();
+
+  // 1. Direct FCM Notification Object (Recognized natively by Android & Web push notification service)
+  const notificationPayload: FCMNotificationSection = {
+    title,
+    body,
+    icon: '/favicon.svg',
+    ...(productImage ? { image: productImage } : {})
+  };
+
+  // 2. Direct FCM Data Object (Carries all metadata, deep link & identifiers)
+  const dataPayload: FCMDataSection = {
+    id: notificationId,
+    productId,
+    productName,
+    productPrice: String(productPrice),
+    originalPrice: String(originalPrice || productPrice),
+    discountPercent: String(discountPercent || 0),
+    productImage,
+    merchantName,
+    category,
+    deepLinkUrl,
+    url: deepLinkUrl,
+    fcmTopic: GLOBAL_PUSH_TOPIC,
+    fcmDeviceToken: deviceToken,
+    timestamp: String(Date.now())
+  };
 
   const payload: ProductNotificationPayload = {
-    id: 'push_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    id: notificationId,
     productId,
     title,
     body,
@@ -478,10 +546,13 @@ export function triggerAutomaticNewProductNotification(
     discountPercent,
     productImage,
     merchantName,
+    category,
     timestamp: Date.now(),
     deepLinkUrl,
     fcmTopic: GLOBAL_PUSH_TOPIC,
-    fcmDeviceToken: getOrCreateAnonymousDeviceToken()
+    fcmDeviceToken: deviceToken,
+    notification: notificationPayload,
+    data: dataPayload
   };
 
   // 1. Dispatch external system notification directly
@@ -496,14 +567,17 @@ export function triggerAutomaticNewProductNotification(
     console.warn('BroadcastChannel send error:', e);
   }
 
-  // 3. Broadcast across clients via Firestore collection if connected
+  // 3. Broadcast across clients via Firestore collection with explicit notification & data envelope
   if (db) {
     try {
       const notifDocRef = doc(collection(db, 'push_notifications'));
       setDoc(notifDocRef, {
         ...payload,
         createdAt: Date.now(),
-        topic: GLOBAL_PUSH_TOPIC
+        topic: GLOBAL_PUSH_TOPIC,
+        // Standard FCM envelope for Android / Web push background delivery
+        notification: notificationPayload,
+        data: dataPayload
       }).catch(() => {});
     } catch {
       // Non-blocking firestore sync
@@ -582,9 +656,56 @@ export function subscribeToAutoNotifications(
       unsubscribeFirestore = onSnapshot(q, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
           if (change.type === 'added') {
-            const data = change.doc.data() as ProductNotificationPayload & { createdAt?: number };
-            // Only trigger if published after this client session started
-            if (data && data.createdAt && data.createdAt > startupTime) {
+            const raw = change.doc.data() as any;
+            if (raw && raw.createdAt && raw.createdAt > startupTime) {
+              const notif = raw.notification || {};
+              const d = raw.data || {};
+              const title = notif.title || d.title || raw.title || '🔥 عرض جديد في عتق أونلاين!';
+              const body = notif.body || d.body || raw.body || 'تصفح أحدث العروض والمنتجات الحصرية الآن 🛍️';
+              const productId = d.productId || raw.productId || '';
+              const productImage = notif.image || d.productImage || raw.productImage;
+              const deepLinkUrl = d.url || d.deepLinkUrl || raw.deepLinkUrl || (productId ? `/?productId=${productId}#product-${productId}` : '/');
+
+              const data: ProductNotificationPayload = {
+                id: raw.id || d.id || change.doc.id,
+                productId,
+                title,
+                body,
+                productName: d.productName || raw.productName || title,
+                productPrice: Number(d.productPrice ?? raw.productPrice ?? 0),
+                originalPrice: d.originalPrice ? Number(d.originalPrice) : raw.originalPrice,
+                discountPercent: d.discountPercent ? Number(d.discountPercent) : raw.discountPercent,
+                productImage,
+                merchantName: d.merchantName || raw.merchantName || 'عتق أونلاين',
+                category: d.category || raw.category,
+                timestamp: Number(d.timestamp ?? raw.timestamp ?? raw.createdAt),
+                deepLinkUrl,
+                fcmTopic: d.fcmTopic || raw.topic || raw.fcmTopic || GLOBAL_PUSH_TOPIC,
+                fcmDeviceToken: d.fcmDeviceToken || raw.fcmDeviceToken,
+                notification: notif.title ? notif : {
+                  title,
+                  body,
+                  icon: '/favicon.svg',
+                  image: productImage
+                },
+                data: d.productId ? d : {
+                  id: raw.id || change.doc.id,
+                  productId,
+                  productName: raw.productName || title,
+                  productPrice: String(raw.productPrice || 0),
+                  originalPrice: String(raw.originalPrice || 0),
+                  discountPercent: String(raw.discountPercent || 0),
+                  productImage: productImage || '',
+                  merchantName: raw.merchantName || 'عتق أونلاين',
+                  category: raw.category || 'عام',
+                  deepLinkUrl,
+                  url: deepLinkUrl,
+                  fcmTopic: raw.topic || GLOBAL_PUSH_TOPIC,
+                  fcmDeviceToken: raw.fcmDeviceToken || '',
+                  timestamp: String(raw.createdAt || Date.now())
+                }
+              };
+
               const myToken = getOrCreateAnonymousDeviceToken();
               if (data.fcmDeviceToken !== myToken) {
                 dispatchExternalSystemNotification(data);
