@@ -2,6 +2,8 @@ import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
 import { 
   getFirestore, 
   initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   setLogLevel,
   type Firestore, 
   doc, 
@@ -81,11 +83,17 @@ try {
     }
     try {
       db = initializeFirestore(app, {
-        experimentalForceLongPolling: true,
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
         ignoreUndefinedProperties: true,
       });
     } catch {
-      db = getFirestore(app);
+      try {
+        db = getFirestore(app);
+      } catch {
+        db = null;
+      }
     }
     auth = getAuth(app);
     try {
@@ -545,10 +553,19 @@ export function subscribeToFirestoreProducts(
   onProductsUpdate: (products: Product[]) => void,
   onError?: (err: unknown) => void
 ): () => void {
-  // If Firestore db instance is unavailable, fallback immediately to local cache
-  if (!db) {
+  // 1. OFFLINE-FIRST: Instantly emit cached products from localStorage in 0ms
+  // The user sees the store and products immediately without waiting for server response
+  try {
     const cached = getLocalCachedProducts();
-    onProductsUpdate(cached);
+    if (cached.length > 0) {
+      onProductsUpdate(cached);
+    }
+  } catch (e) {
+    console.warn('Immediate local cache read notice:', e);
+  }
+
+  // If Firestore db instance is unavailable, fallback is already active
+  if (!db) {
     return () => {};
   }
 
@@ -899,9 +916,15 @@ export function subscribeToFirestoreSettings(
   onSettingsUpdate: (settings: PlatformSettings) => void,
   onError?: (err: unknown) => void
 ): () => void {
-  if (!db) {
+  // 1. OFFLINE-FIRST: Instantly deliver cached settings in 0ms
+  try {
     const cached = getLocalCachedSettings();
     onSettingsUpdate(cached);
+  } catch (e) {
+    console.warn('Immediate settings cache read notice:', e);
+  }
+
+  if (!db) {
     return () => {};
   }
 

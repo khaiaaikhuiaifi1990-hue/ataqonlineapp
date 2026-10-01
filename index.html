@@ -23,12 +23,15 @@
     </noscript>
     
     <script>
-      // Non-blocking splash controller with strict 800ms ceiling
+      // Non-blocking splash controller with strict 750ms ceiling
       (function() {
+        var dismissed = false;
         window.__hideHtmlSplash = function() {
+          if (dismissed) return;
+          dismissed = true;
           var el = document.getElementById('initial-html-splash');
-          if (el && !el.classList.contains('splash-fading')) {
-            el.classList.add('splash-fading');
+          if (el) {
+            el.style.transition = 'opacity 0.2s ease-out';
             el.style.opacity = '0';
             el.style.pointerEvents = 'none';
             setTimeout(function() {
@@ -36,8 +39,8 @@
             }, 200);
           }
         };
-        // Guarantee removal within at most 800ms regardless of network/device status
-        setTimeout(window.__hideHtmlSplash, 800);
+        // Guarantee removal within at most 750ms regardless of network or device status
+        setTimeout(window.__hideHtmlSplash, 750);
       })();
     </script>
     

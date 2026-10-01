@@ -3,40 +3,39 @@ import { ShoppingBag, Sparkles } from 'lucide-react';
 
 interface SplashScreenProps {
   onComplete: () => void;
-  maxDurationMs?: number; // Default: 800ms
+  maxDurationMs?: number; // Default: 750ms (strictly within 700 - 1000ms)
 }
 
 /**
  * Ultra-Fast Non-Blocking Splash Screen for Ataq Online
- * Guarantees visual hand-off to the main store interface within <= 800ms max.
+ * Guarantees visual hand-off to the main store interface within <= 750ms max.
  * Fully decoupled from Firebase, background network calls, and analytics.
  */
 export const SplashScreen: React.FC<SplashScreenProps> = ({
   onComplete,
-  maxDurationMs = 800
+  maxDurationMs = 750
 }) => {
   const [isFadingOut, setIsFadingOut] = useState(false);
-  const [progress, setProgress] = useState(15);
+  const [progress, setProgress] = useState(25);
 
   useEffect(() => {
-    // 1. Smooth micro-progress bar advancing rapidly within 600ms
+    // 1. Rapid progress bar completing within 450ms
     const startTime = Date.now();
-    const progressDuration = Math.max(300, maxDurationMs - 200);
+    const progressDuration = Math.max(250, maxDurationMs - 250);
 
     const progressTimer = setInterval(() => {
       const elapsed = Date.now() - startTime;
-      const pct = Math.min(100, Math.round(15 + (elapsed / progressDuration) * 85));
+      const pct = Math.min(100, Math.round(25 + (elapsed / progressDuration) * 75));
       setProgress(pct);
       if (pct >= 100) {
         clearInterval(progressTimer);
       }
-    }, 40);
+    }, 30);
 
     // 2. Start fade-out before the hard ceiling
-    const fadeOutDelay = Math.max(250, maxDurationMs - 220);
+    const fadeOutDelay = Math.max(200, maxDurationMs - 200);
     const fadeTimer = setTimeout(() => {
       setIsFadingOut(true);
-      // Also notify any static HTML splash screen to fade out
       if (typeof window !== 'undefined' && typeof (window as any).__hideHtmlSplash === 'function') {
         try {
           (window as any).__hideHtmlSplash();
@@ -44,7 +43,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
       }
     }, fadeOutDelay);
 
-    // 3. Absolute Hard Ceiling (Strictly <= 800ms)
+    // 3. Absolute Hard Ceiling (Strictly <= 750ms)
     const completeTimer = setTimeout(() => {
       onComplete();
     }, maxDurationMs);
@@ -63,17 +62,18 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
         (window as any).__hideHtmlSplash();
       } catch {}
     }
-    setTimeout(onComplete, 150);
+    setTimeout(onComplete, 50);
   };
 
   return (
     <div
       id="app-splash-overlay"
       onClick={handleQuickDismiss}
-      className={`fixed inset-0 z-9999 flex flex-col items-center justify-between bg-white px-6 py-12 transition-all duration-200 ease-out select-none cursor-pointer ${
+      className={`fixed inset-0 z-50 flex flex-col items-center justify-between bg-white px-6 py-12 transition-all duration-200 ease-out select-none cursor-pointer ${
         isFadingOut ? 'opacity-0 scale-98 pointer-events-none' : 'opacity-100 scale-100'
       }`}
       style={{
+        zIndex: 99999,
         willChange: 'opacity, transform',
       }}
       aria-label="شاشة بدء عتق أونلاين"

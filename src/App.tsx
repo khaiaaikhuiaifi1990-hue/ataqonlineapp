@@ -38,8 +38,33 @@ const ACTIVE_MERCHANT_SESSION_KEY = 'ataq_active_merchant_v2';
 const OWNER_AUTH_SESSION_KEY = 'ataq_owner_auth_v2';
 
 export function App() {
-  // Splash Screen State with strict <= 800ms ceiling
+  // Splash Screen State with strict 750ms ceiling (< 1s)
   const [showSplash, setShowSplash] = useState(true);
+
+  // FORCED SPLASH TIMEOUT (Hard Ceiling: 750ms):
+  // Guarantees splash disappears and main store appears within < 1 second (750ms)
+  // unconditionally, regardless of network or Firestore connectivity.
+  useEffect(() => {
+    const forcedSplashTimer = setTimeout(() => {
+      setShowSplash(false);
+      if (typeof window !== 'undefined') {
+        const el = document.getElementById('initial-html-splash');
+        if (el) {
+          el.style.transition = 'opacity 0.2s ease-out';
+          el.style.opacity = '0';
+          el.style.pointerEvents = 'none';
+          setTimeout(() => el.remove(), 200);
+        }
+        if (typeof (window as any).__hideHtmlSplash === 'function') {
+          try {
+            (window as any).__hideHtmlSplash();
+          } catch {}
+        }
+      }
+    }, 750);
+
+    return () => clearTimeout(forcedSplashTimer);
+  }, []);
 
   // 1. Core State loaded instantly (0ms) from local cache (Cache First)
   const [products, setProducts] = useState<Product[]>(() => getLocalCachedProducts());
@@ -126,22 +151,16 @@ export function App() {
   }, []);
 
   // Non-blocking background initialization: run device tracking & SW registration
-  // strictly in the background without blocking initial paint or the splash screen
+  // strictly in the background after main store and cached products are rendered
   useEffect(() => {
     const runBackgroundBootstrap = () => {
       trackDeviceOnStartup().catch(() => {});
       registerPushServiceWorker();
     };
 
-    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      const handle = window.requestIdleCallback(runBackgroundBootstrap, { timeout: 3000 });
-      return () => {
-        if ('cancelIdleCallback' in window) window.cancelIdleCallback(handle);
-      };
-    } else {
-      const timer = setTimeout(runBackgroundBootstrap, 1000);
-      return () => clearTimeout(timer);
-    }
+    // Defer until after splash screen has cleared (> 800ms)
+    const timer = setTimeout(runBackgroundBootstrap, 1200);
+    return () => clearTimeout(timer);
   }, []);
 
   // Real-time Firestore sync with zero-dummy data and offline cache persistence
@@ -437,7 +456,7 @@ export function App() {
     <>
       {showSplash && (
         <SplashScreen
-          maxDurationMs={800}
+          maxDurationMs={750}
           onComplete={() => {
             setShowSplash(false);
             if (typeof window !== 'undefined' && typeof (window as any).__hideHtmlSplash === 'function') {

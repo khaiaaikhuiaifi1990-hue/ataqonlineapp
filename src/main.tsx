@@ -66,3 +66,12 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+// Trigger HTML splash dismissal as soon as React app bundle mounts
+if (typeof window !== 'undefined' && typeof (window as any).__hideHtmlSplash === 'function') {
+  setTimeout(() => {
+    try {
+      (window as any).__hideHtmlSplash();
+    } catch {}
+  }, 200);
+}
